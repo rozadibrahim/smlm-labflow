@@ -85,6 +85,8 @@ import pandas as pd
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib  # Force headless backend before pyplot to avoid Windows DLL
+matplotlib.use("Agg")  # delay-load crashes (0xC06D007F) inside batch inference.
 import matplotlib.pyplot as plt  # noqa: E402
 
 try:
@@ -689,11 +691,19 @@ def physical_sanity_quality(
 
     if "confidence" in df.columns:
         conf = pd.to_numeric(df["confidence"], errors="coerce")
+        # Only enforce a numeric range when the profile explicitly says the
+        # column is a probability. By default we accept any finite value so
+        # that backends whose "confidence" is a raw score (e.g. LiteLoc) do
+        # not generate spurious 50% out-of-range warnings.
+        treat_as_probability = bool(thresholds.get("confidence_is_probability", False))
         lo = float(thresholds.get("confidence_min", 0.0))
         hi = float(thresholds.get("confidence_max", 1.0))
         out_frac = float(((conf < lo) | (conf > hi)).sum() / n)
         metrics["confidence_outside_expected_range_fraction"] = out_frac
-        if out_frac > 0:
+        metrics["confidence_treated_as_probability"] = treat_as_probability
+        # Warn only when explicitly treated as a probability AND some values fall outside.
+        warn_frac = float(thresholds.get("confidence_out_of_range_warn_fraction", 0.01))
+        if treat_as_probability and out_frac > warn_frac:
             add_flag(
                 flags,
                 "warning",
@@ -702,7 +712,11 @@ def physical_sanity_quality(
                 metric="sanity.confidence_outside_expected_range_fraction",
                 value=out_frac,
                 threshold=[lo, hi],
-                recommendation="If this column is not a probability, rename it or adjust profile.quality.thresholds.confidence_min/max.",
+                recommendation=(
+                    "If this column is a raw score (not a probability), set "
+                    "profile.quality.thresholds.confidence_is_probability=false. "
+                    "Otherwise inspect the backend or normalize in post_inference."
+                ),
             )
 
     for axis in ["x", "y", "z"]:
@@ -983,11 +997,23 @@ def density_and_fft_quality(
         plt.close()
         metrics["plot_density_log"] = str(density_png)
 
-        H0 = H - np.mean(H)
+        # Apply a 2D Hanning window before FFT to suppress spectral leakage from
+        # the rectangular FOV. Without windowing, the sinc-shaped sidelobes of a
+        # finite rectangular support easily exceed the median power and
+        # false-trigger the grid-artifact detector on biological samples.
+        window_1d_x = np.hanning(H.shape[0])
+        window_1d_y = np.hanning(H.shape[1])
+        window_2d = np.outer(window_1d_x, window_1d_y)
+        H0 = (H - np.mean(H)) * window_2d
         F = np.abs(np.fft.fftshift(np.fft.fft2(H0)))
+        # DC mask radius scales with grid size; ±2 was too tight at bins=256.
+        dc_radius = max(2, int(round(bins / 64.0)))
         center_x = F.shape[0] // 2
         center_y = F.shape[1] // 2
-        F[max(0, center_x - 2) : center_x + 3, max(0, center_y - 2) : center_y + 3] = 0
+        F[
+            max(0, center_x - dc_radius) : center_x + dc_radius + 1,
+            max(0, center_y - dc_radius) : center_y + dc_radius + 1,
+        ] = 0
         positive = F[F > 0]
         if positive.size:
             median_power = float(np.median(positive))
@@ -1020,7 +1046,9 @@ def density_and_fft_quality(
                 "fft_grid_artifact_score": grid_score,
             }
         )
-        limit = float(thresholds.get("grid_fft_warn_score", 20.0))
+        # Threshold recalibrated for windowed FFT (rectangular leakage suppressed).
+        # Old value 20.0 was tuned to the unwindowed regime and over-flagged.
+        limit = float(thresholds.get("grid_fft_warn_score", 60.0))
         if grid_score is not None and grid_score > limit:
             add_flag(
                 flags,
@@ -1052,6 +1080,14 @@ def drift_proxy_quality(
     thresholds: Mapping[str, Any],
     assets_dir: Path,
 ) -> Dict[str, Any]:
+    """
+    Centroid-shift proxy. NOT a real drift measurement.
+
+    The per-frame median of all localizations is dominated by sample structure
+    and photobleaching gradients, NOT by stage drift. This metric is useful as
+    a coarse sanity flag; for actual drift correction, use fiducials or
+    redundant cross-correlation in a downstream tool (Picasso, SMAP, Locan).
+    """
     if not all(c in df.columns for c in ["frame", "x", "y"]):
         return {"available": False}
 
@@ -1063,8 +1099,14 @@ def drift_proxy_quality(
         return {"available": False, "reason": "not enough valid frames"}
 
     grouped = work.groupby(work["frame"].astype(int))[['x', 'y']].median().sort_index()
-    dx = grouped["x"] - grouped["x"].iloc[0]
-    dy = grouped["y"] - grouped["y"].iloc[0]
+
+    # Reference = median centroid over the first 5% of frames (more stable than
+    # the first single frame, which has ~σ/√N_loc noise on each axis).
+    ref_window = max(1, int(round(len(grouped) * 0.05)))
+    x_ref = float(grouped["x"].iloc[:ref_window].median())
+    y_ref = float(grouped["y"].iloc[:ref_window].median())
+    dx = grouped["x"] - x_ref
+    dy = grouped["y"] - y_ref
     displacement = np.sqrt(dx**2 + dy**2)
 
     fov_x = float(work["x"].max() - work["x"].min())
@@ -1075,7 +1117,13 @@ def drift_proxy_quality(
 
     metrics: Dict[str, Any] = {
         "available": True,
-        "method": "per-frame median center displacement proxy; not a replacement for fiducial drift correction",
+        "method": (
+            "Per-frame median XY centroid shift relative to the median of the "
+            "first 5% of frames. NOT a drift correction; sample structure and "
+            "photobleaching dominate this signal. Use fiducial-based methods "
+            "(Picasso/SMAP/Locan) for quantitative drift correction."
+        ),
+        "reference_window_frames": ref_window,
         "max_median_center_displacement": max_disp,
         "final_median_center_displacement": float(displacement.iloc[-1]),
         "max_median_center_displacement_fraction_of_fov_diagonal": frac_fov,
@@ -1096,17 +1144,30 @@ def drift_proxy_quality(
     except Exception:
         plt.close("all")
 
-    limit = float(thresholds.get("center_drift_warn_fraction_of_fov", 0.15))
+    # Threshold raised from 0.15 to 0.30. On structured biological samples
+    # (microtubules, NPC, actin) photobleaching gradients alone routinely
+    # shift the median centroid by 15-25% of the FOV diagonal without any
+    # instrumental drift. 0.30 captures genuinely pathological cases while
+    # avoiding routine false positives.
+    limit = float(thresholds.get("center_drift_warn_fraction_of_fov", 0.30))
     if frac_fov is not None and frac_fov > limit:
         add_flag(
             flags,
             "warning",
-            "large_median_center_shift",
-            "The per-frame median localization center shifts strongly relative to the field of view.",
+            "large_centroid_shift_proxy",
+            (
+                "Per-frame median localization centroid shifts strongly relative "
+                "to the field of view. This is NOT a drift measurement; "
+                "non-uniform photobleaching can also produce this signal."
+            ),
             metric="drift_proxy.max_median_center_displacement_fraction_of_fov_diagonal",
             value=frac_fov,
             threshold=limit,
-            recommendation="Inspect drift correction, stage stability, photobleaching pattern, and sample motion.",
+            recommendation=(
+                "Inspect drift via fiducials (Picasso/SMAP/Locan) before "
+                "interpreting. Also check photobleaching uniformity and "
+                "sample motion."
+            ),
         )
 
     return metrics

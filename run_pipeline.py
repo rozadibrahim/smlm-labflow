@@ -2125,6 +2125,20 @@ def run_train(args: argparse.Namespace) -> Dict[str, Any]:
     report = generate_report_safely(folders)
     summary["report"] = report
     write_json(summary, folders.registry / "run_summary.json")
+
+    # --- Post-training auto-benchmark ----------------------------------------
+    # Only fires if training passed and post_training.py is available on disk.
+    # Failures are surfaced in run_summary.json but do not flip the train status.
+    post_training_summary = run_post_training_hook(
+        train_status=status,
+        train_dir=folders.parent,
+        skip=bool(getattr(args, "skip_post_training", False)),
+    )
+    if post_training_summary is not None:
+        summary["post_training"] = post_training_summary
+        write_json(summary, folders.registry / "run_summary.json")
+    # -------------------------------------------------------------------------
+
     write_run_status(
         folders,
         status=status,
@@ -2134,6 +2148,52 @@ def run_train(args: argparse.Namespace) -> Dict[str, Any]:
 
     print_footer(folders, summary)
     return summary
+
+
+def run_post_training_hook(
+    *,
+    train_status: str,
+    train_dir: Path,
+    skip: bool,
+) -> Optional[Dict[str, Any]]:
+    """
+    Invoke post_training.run_post_training if available and training passed.
+
+    Failures here are non-fatal: they are recorded in the returned dict so the
+    user sees them in the run_summary, but they do not change the train status.
+    """
+    if skip:
+        return {"status": "skipped", "reason": "--skip-post-training"}
+    if train_status != "passed":
+        return {"status": "skipped", "reason": f"train_status={train_status!r}"}
+
+    project_root = Path(__file__).resolve().parent
+    script = project_root / "post_training.py"
+    if not script.exists():
+        return {"status": "skipped", "reason": "post_training.py not found"}
+
+    try:
+        # Import lazily so a missing dependency only fails the hook, not train.
+        sys.path.insert(0, str(project_root))
+        try:
+            import post_training  # type: ignore
+        finally:
+            try:
+                sys.path.remove(str(project_root))
+            except ValueError:
+                pass
+        row = post_training.run_post_training(
+            train_dir=Path(train_dir),
+            project_root=project_root,
+        )
+        return {"status": "passed", "row": row}
+    except Exception as exc:  # noqa: BLE001 — explicit non-fatal
+        import traceback
+        return {
+            "status": "failed",
+            "error": repr(exc),
+            "traceback": traceback.format_exc(limit=4),
+        }
 
 
 def run_infer(args: argparse.Namespace) -> Dict[str, Any]:
@@ -2758,6 +2818,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     add_common_args(train_parser)
+    train_parser.add_argument(
+        "--skip-post-training",
+        action="store_true",
+        help=(
+            "Do not run post_training.py after a passing train run. "
+            "By default, training auto-benchmarks against the held-out validation "
+            "labels and writes post_training_benchmark.csv."
+        ),
+    )
 
     infer_parser = subparsers.add_parser(
         "infer",

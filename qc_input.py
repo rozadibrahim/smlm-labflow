@@ -23,12 +23,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
+import matplotlib  # Force the headless backend BEFORE pyplot import; otherwise
+matplotlib.use("Agg")  # the default Windows backend tries to load a font DLL
+import matplotlib.pyplot as plt  # that isn't always present, crashing the process.
 import numpy as np
 import tifffile
 
@@ -239,10 +242,19 @@ def make_preview_image(arr: np.ndarray) -> np.ndarray:
     return preview
 
 
-def robust_stats(arr: np.ndarray) -> Dict[str, Any]:
-    """Compute useful numeric QC stats."""
-    arr_float = arr.astype(np.float64, copy=False)
+def _dtype_saturation_value(dtype: np.dtype) -> Optional[float]:
+    """Return the saturation value for common integer sensor dtypes (None for floats)."""
+    try:
+        info = np.iinfo(dtype)
+        return float(info.max)
+    except (TypeError, ValueError):
+        return None
 
+
+def robust_stats(arr: np.ndarray) -> Dict[str, Any]:
+    """Compute useful numeric QC stats, including a saturation diagnostic."""
+    original_dtype = arr.dtype
+    arr_float = arr.astype(np.float64, copy=False)
     finite = arr_float[np.isfinite(arr_float)]
 
     if finite.size == 0:
@@ -255,7 +267,31 @@ def robust_stats(arr: np.ndarray) -> Dict[str, Any]:
             "p50": None,
             "p99": None,
             "nonzero_fraction": None,
+            "saturation_value": None,
+            "saturated_pixel_fraction": None,
+            "near_saturated_pixel_fraction": None,
+            "saturation_warning": False,
+            "dynamic_range_used_fraction": None,
         }
+
+    sat_value = _dtype_saturation_value(original_dtype)
+    if sat_value is not None and sat_value > 0:
+        sat_count = float(np.sum(finite >= sat_value))
+        # "Near-saturated" = within 1% of dtype max. Flags soft clipping/gain issues.
+        near_sat_threshold = 0.99 * sat_value
+        near_sat_count = float(np.sum(finite >= near_sat_threshold))
+        sat_frac = float(sat_count / finite.size)
+        near_sat_frac = float(near_sat_count / finite.size)
+        max_observed = float(np.max(finite))
+        dyn_range_frac = float(max_observed / sat_value)
+        # Standard SMLM heuristic: more than 0.1% saturated pixels strongly
+        # suggests over-illumination or wrong EM gain / baseline.
+        saturation_warning = sat_frac > 1e-3
+    else:
+        sat_frac = None
+        near_sat_frac = None
+        saturation_warning = False
+        dyn_range_frac = None
 
     return {
         "min": float(np.min(finite)),
@@ -266,36 +302,74 @@ def robust_stats(arr: np.ndarray) -> Dict[str, Any]:
         "p50": float(np.percentile(finite, 50)),
         "p99": float(np.percentile(finite, 99)),
         "nonzero_fraction": float(np.mean(finite != 0)),
+        "saturation_value": sat_value,
+        "saturated_pixel_fraction": sat_frac,
+        "near_saturated_pixel_fraction": near_sat_frac,
+        "saturation_warning": saturation_warning,
+        "dynamic_range_used_fraction": dyn_range_frac,
     }
 
 
+def _save_image_with_pil(arr: np.ndarray, out_path: Path) -> bool:
+    """Fallback: write the preview directly via PIL, bypassing matplotlib.
+
+    Some Windows + MKL setups have a NumPy delay-load DLL bug that crashes
+    matplotlib at draw time (exit code 0xC06D007F). PIL doesn't need
+    numpy.dot, so it sidesteps the issue.
+    """
+    try:
+        from PIL import Image
+        a = np.asarray(arr, dtype=np.float64)
+        finite = a[np.isfinite(a)]
+        if finite.size == 0:
+            return False
+        lo = float(np.percentile(finite, 1))
+        hi = float(np.percentile(finite, 99))
+        if hi <= lo:
+            hi = lo + 1.0
+        norm = np.clip((a - lo) / (hi - lo), 0.0, 1.0)
+        img = (norm * 255.0).astype(np.uint8)
+        Image.fromarray(img, mode="L").save(out_path)
+        return True
+    except Exception:
+        return False
+
+
 def save_preview(preview: np.ndarray, out_path: Path) -> None:
-    """Save preview image."""
-    plt.figure(figsize=(6, 6))
-    plt.imshow(preview, cmap="gray")
-    plt.axis("off")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches="tight", pad_inches=0)
-    plt.close()
+    """Save preview image via PIL.
+
+    matplotlib's draw path triggers a non-catchable Windows fatal exception
+    (0xC06D007F, NumPy/MKL delay-load DLL failure) on some environments.
+    PIL doesn't hit that codepath. The preview is informational only, so
+    a simple stretched-grayscale image is sufficient.
+    """
+    _save_image_with_pil(preview, out_path)
 
 
 def save_histogram(arr: np.ndarray, out_path: Path) -> None:
-    """Save intensity histogram."""
-    values = arr.astype(np.float64, copy=False).ravel()
-    values = values[np.isfinite(values)]
+    """Skip histogram entirely if SMLM_LABFLOW_SKIP_QC_PLOTS=1, else try matplotlib.
 
-    if values.size > 1_000_000:
-        rng = np.random.default_rng(42)
-        values = rng.choice(values, size=1_000_000, replace=False)
-
-    plt.figure(figsize=(7, 4))
-    plt.hist(values, bins=100)
-    plt.xlabel("Intensity")
-    plt.ylabel("Pixel count")
-    plt.title("Input intensity histogram")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    plt.close()
+    On environments with a broken NumPy/MKL DLL, matplotlib crashes the
+    process during savefig. Set the env var to skip safely.
+    """
+    if os.environ.get("SMLM_LABFLOW_SKIP_QC_PLOTS") == "1":
+        return
+    try:
+        values = arr.astype(np.float64, copy=False).ravel()
+        values = values[np.isfinite(values)]
+        if values.size > 1_000_000:
+            rng = np.random.default_rng(42)
+            values = rng.choice(values, size=1_000_000, replace=False)
+        fig = plt.figure(figsize=(7, 4))
+        ax = fig.add_axes([0.12, 0.15, 0.85, 0.78])
+        ax.hist(values, bins=100)
+        ax.set_xlabel("Intensity")
+        ax.set_ylabel("Pixel count")
+        ax.set_title("Input intensity histogram")
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
+    except Exception:
+        pass
 
 
 def qc_one_movie(
@@ -336,6 +410,12 @@ def qc_one_movie(
         save_histogram(arr, histogram_png)
 
         result.update(metadata)
+        warnings: List[str] = []
+        if stats.get("saturation_warning"):
+            warnings.append(
+                "saturated_pixels: > 0.1% of sampled pixels at dtype max "
+                f"(saturation value {stats.get('saturation_value')})"
+            )
         result.update(
             {
                 "qc_status": "passed",
@@ -343,6 +423,7 @@ def qc_one_movie(
                 "sampled_dtype": str(arr.dtype),
                 "stats": stats,
                 "preview_shape": list(preview.shape),
+                "warnings": warnings,
             }
         )
 

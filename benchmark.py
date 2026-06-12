@@ -81,7 +81,8 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="microseconds")
 
 
-def elapsed_minutes_between(start_time: Any, end_time: Any) -> Optional[float]:
+def elapsed_seconds_between(start_time: Any, end_time: Any) -> Optional[float]:
+    """Return wall-clock seconds between two ISO timestamps, or None on parse failure."""
     try:
         start_text = str(start_time).strip()
         end_text = str(end_time).strip()
@@ -94,9 +95,15 @@ def elapsed_minutes_between(start_time: Any, end_time: Any) -> Optional[float]:
                 start_dt = start_dt.replace(tzinfo=end_dt.tzinfo)
             else:
                 end_dt = end_dt.replace(tzinfo=start_dt.tzinfo)
-        return (end_dt - start_dt).total_seconds() / 60.0
+        return (end_dt - start_dt).total_seconds()
     except Exception:
         return None
+
+
+def elapsed_minutes_between(start_time: Any, end_time: Any) -> Optional[float]:
+    """Kept for backwards compatibility; prefer elapsed_seconds_between."""
+    sec = elapsed_seconds_between(start_time, end_time)
+    return None if sec is None else sec / 60.0
 
 
 def bytes_to_mb(value: Optional[int | float]) -> Optional[float]:
@@ -138,17 +145,23 @@ def safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
+def runtime_row_elapsed_sec(row: Mapping[str, Any]) -> float:
+    """Wall-clock seconds for a runtime row. Robust to legacy elapsed_min schemas."""
+    elapsed = elapsed_seconds_between(row.get("start_time"), row.get("end_time"))
+    if elapsed is not None:
+        return elapsed
+
+    elapsed = safe_float(row.get("elapsed_sec"))
+    if elapsed is not None:
+        return elapsed
+
+    elapsed_min = safe_float(row.get("elapsed_min"), 0.0) or 0.0
+    return elapsed_min * 60.0
+
+
 def runtime_row_elapsed_min(row: Mapping[str, Any]) -> float:
-    elapsed = elapsed_minutes_between(row.get("start_time"), row.get("end_time"))
-    if elapsed is not None:
-        return elapsed
-
-    elapsed = safe_float(row.get("elapsed_min"))
-    if elapsed is not None:
-        return elapsed
-
-    elapsed_sec = safe_float(row.get("elapsed_sec"), 0.0) or 0.0
-    return elapsed_sec / 60.0
+    """Kept for backwards compatibility; returns minutes from runtime_row_elapsed_sec."""
+    return runtime_row_elapsed_sec(row) / 60.0
 
 
 def safe_str(value: Any) -> str:
@@ -289,6 +302,11 @@ def safe_import_pandas():
 
 
 def safe_import_matplotlib():
+    # Hard kill-switch: when matplotlib crashes the interpreter via a
+    # NumPy/MKL delay-load DLL failure on Windows, the user can set
+    # SMLM_LABFLOW_SKIP_QC_PLOTS=1 to make every maybe_plot_* call a no-op.
+    if os.environ.get("SMLM_LABFLOW_SKIP_QC_PLOTS") == "1":
+        return None
     try:
         import matplotlib
 
@@ -1162,9 +1180,11 @@ def estimate_frc_resolution(
     coordinate_units: str = "nm",
     pixel_size_nm: Optional[float] = None,
     threshold: float = 1.0 / 7.0,
-    max_grid_size: int = 1024,
+    max_grid_size: int = 4096,
     min_render_pixel_nm: float = 5.0,
+    target_render_pixel_nm: float = 8.0,
     min_localizations: int = 200,
+    curve_smoothing_window: int = 3,
 ) -> Dict[str, Any]:
     """
     Estimate 2D FRC resolution from two independent half maps.
@@ -1257,13 +1277,18 @@ def estimate_frc_resolution(
             result["notes"] = "FRC requires nonzero XY field of view."
             return result
 
-        render_pixel_nm = max(min_render_pixel_nm, fov_nm / float(max_grid_size - 1))
+        # Decouple render pixel size from grid size so Nyquist of the rendered image
+        # is fine enough to actually measure SMLM-scale resolution.
+        # Target ~target_render_pixel_nm (default 8 nm) → Nyquist ≈ 16 nm, well below
+        # typical SMLM resolutions. Grow the grid up to max_grid_size as needed.
+        render_pixel_nm = max(min_render_pixel_nm, target_render_pixel_nm)
+        required_grid = int(math.ceil(fov_nm / render_pixel_nm)) + 1
         grid_size = next_power_of_two_at_least(
-            int(math.ceil(fov_nm / render_pixel_nm)) + 1,
-            minimum=64,
-            maximum=max_grid_size,
+            required_grid, minimum=64, maximum=max_grid_size
         )
-        render_pixel_nm = fov_nm / float(max(grid_size - 1, 1))
+        # If FOV is huge and we hit the cap, recompute the (coarser) render pixel.
+        if required_grid > grid_size:
+            render_pixel_nm = fov_nm / float(max(grid_size - 1, 1))
         if render_pixel_nm <= 0:
             render_pixel_nm = min_render_pixel_nm
 
@@ -1323,13 +1348,32 @@ def estimate_frc_resolution(
             result["notes"] = "FRC curve could not be computed."
             return result
 
+        # Smooth the FRC curve with a moving average before threshold crossing.
+        # Raw radial-averaged FRC can oscillate near 1/7; an unsmoothed crossing
+        # can over- or under-estimate resolution by 10-20%.
+        smoothed_frc = list(frc_values)
+        w = max(1, int(curve_smoothing_window))
+        if w > 1 and len(frc_values) >= w:
+            half = w // 2
+            arr = np.asarray(frc_values, dtype=float)
+            kernel = np.ones(w, dtype=float) / w
+            smoothed = np.convolve(arr, kernel, mode="same")
+            # Restore endpoints from the raw curve to avoid edge bias.
+            for i in range(min(half, len(smoothed_frc))):
+                smoothed[i] = arr[i]
+                smoothed[-(i + 1)] = arr[-(i + 1)]
+            smoothed_frc = smoothed.tolist()
+
+        for row, sm in zip(curve_rows, smoothed_frc):
+            row["frc_smoothed"] = float(sm)
+
         curve_csv = out_dir / f"frc_curve_batch_{batch_index or 0}.csv"
         write_rows_csv(curve_rows, curve_csv)
         result["frc_curve_csv"] = str(curve_csv)
         result["frc_curve_plot"] = (
             maybe_plot_frc_curve(
                 frequency_values,
-                frc_values,
+                smoothed_frc,
                 figures_dir / f"frc_curve_batch_{batch_index or 0}.png",
                 threshold,
             )
@@ -1337,11 +1381,12 @@ def estimate_frc_resolution(
         )
         result["frc_render_pixel_nm"] = round(float(render_pixel_nm), 6)
         result["frc_grid_size"] = int(grid_size)
+        result["frc_curve_smoothing_window"] = int(w)
 
         crossing_frequency = None
-        for i in range(1, len(frc_values)):
-            prev_frc = frc_values[i - 1]
-            curr_frc = frc_values[i]
+        for i in range(1, len(smoothed_frc)):
+            prev_frc = smoothed_frc[i - 1]
+            curr_frc = smoothed_frc[i]
             if prev_frc >= threshold and curr_frc <= threshold:
                 f0 = frequency_values[i - 1]
                 f1 = frequency_values[i]
@@ -1724,11 +1769,14 @@ class ResourceSampler:
     def __init__(
         self,
         out_dir: Path,
-        sample_interval_sec: float = 1.0,
+        sample_interval_sec: float = 0.5,
         enabled: bool = True,
-        write_every_n_samples: int = 10,
+        write_every_n_samples: int = 20,
     ) -> None:
         self.out_dir = out_dir
+        # Floor at 0.2 s to avoid pegging psutil/NVML, default lowered to 0.5 s
+        # so short stages (~30 s) get enough samples to characterise the GPU
+        # ramp + sustained-compute phases separately.
         self.sample_interval_sec = max(0.2, float(sample_interval_sec))
         self.enabled = enabled
         self.write_every_n_samples = max(1, int(write_every_n_samples))
@@ -1897,21 +1945,68 @@ class ResourceSampler:
                 return None
             return round(sum(values) / len(values), 6)
 
+        # Approximate GPU energy by trapezoidal integration of gpu_power_w
+        # samples over their wall-clock timestamps. This is an estimate, not a
+        # PMU reading; sub-second power transients are not captured.
+        energy_j_total: Optional[float] = None
+        try:
+            timestamps: List[float] = []
+            powers: List[float] = []
+            for row in self.rows:
+                ts = row.get("timestamp")
+                pw = safe_float(row.get("gpu_power_w"))
+                if not ts or pw is None:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                timestamps.append(dt.timestamp())
+                powers.append(float(pw))
+            if len(timestamps) >= 2:
+                energy_j_total = 0.0
+                for i in range(1, len(timestamps)):
+                    dt_sec = timestamps[i] - timestamps[i - 1]
+                    if dt_sec <= 0 or dt_sec > 60.0:
+                        # Skip suspect gaps (process paused or clock drift).
+                        continue
+                    avg_power = (powers[i] + powers[i - 1]) / 2.0
+                    energy_j_total += avg_power * dt_sec
+        except Exception:
+            energy_j_total = None
+
         return {
             "resource_csv": str(self.csv_path),
             "resource_json": str(self.json_path),
             "n_resource_samples": len(self.rows),
+            "sample_interval_sec": self.sample_interval_sec,
             "max_rss_mb": max_numeric("rss_mb"),
             "max_vms_mb": max_numeric("vms_mb"),
-            "max_gpu_mem_used_mb": max_numeric("gpu_mem_used_mb"),
-            "max_gpu_total_mem_used_mb": max_numeric("gpu_total_mem_used_mb"),
-            "max_gpu_util_percent": max_numeric("gpu_util_percent"),
+            # GPU memory: NVML reports system-wide per device. The "total" sums
+            # across visible GPUs and is mainly informative for multi-GPU runs.
+            "max_gpu0_mem_used_mb": max_numeric("gpu_mem_used_mb"),
+            "max_gpu_summed_mem_used_mb": max_numeric("gpu_total_mem_used_mb"),
+            # Utilisation: gpu0 is the first device; "_any" takes the max
+            # across all visible devices per sample.
+            "max_gpu0_util_percent": max_numeric("gpu_util_percent"),
             "max_gpu_any_util_percent": max_numeric("gpu_max_util_percent"),
-            "mean_gpu_util_percent": mean_numeric("gpu_util_percent"),
+            "mean_gpu0_util_percent": mean_numeric("gpu_util_percent"),
             "mean_gpu_any_util_percent": mean_numeric("gpu_mean_util_percent"),
             "max_torch_cuda_peak_memory_allocated_mb": max_numeric(
                 "torch_cuda_peak_memory_allocated_mb"
             ),
+            # Approximate GPU energy across the sampled window.
+            "gpu_energy_joules_estimate": (
+                round(energy_j_total, 3) if energy_j_total is not None else None
+            ),
+            "gpu_energy_wh_estimate": (
+                round(energy_j_total / 3600.0, 6) if energy_j_total is not None else None
+            ),
+            # Legacy names kept as aliases so older consumers don't break.
+            "max_gpu_mem_used_mb": max_numeric("gpu_mem_used_mb"),
+            "max_gpu_total_mem_used_mb": max_numeric("gpu_total_mem_used_mb"),
+            "max_gpu_util_percent": max_numeric("gpu_util_percent"),
+            "mean_gpu_util_percent": mean_numeric("gpu_util_percent"),
         }
 
 
@@ -2324,18 +2419,29 @@ def benchmark_resolution_proxy(
     med_lpz = safe_float(localization_qc_row.get("median_lpz"))
     density = safe_float(localization_qc_row.get("density_per_um2"))
     xy_vals = [v for v in [med_lpx, med_lpy] if v is not None]
-    median_xy_precision = sum(xy_vals) / len(xy_vals) if xy_vals else None
+    # Mean of the two per-axis medians. NOT the same as the median of the union
+    # of (lpx, lpy), but a reasonable scalar summary when both axes are similar.
+    mean_axis_median_xy_precision = (
+        sum(xy_vals) / len(xy_vals) if xy_vals else None
+    )
 
     rows.append(
         {
             "benchmark_layer": "resolution",
             "batch_index": batch_index,
-            "metric": "median_xy_localization_precision",
-            "value": median_xy_precision,
+            # Renamed for honesty; old name kept as alias in the same row.
+            "metric": "mean_axis_median_xy_localization_precision",
+            "value": mean_axis_median_xy_precision,
             "unit": "same_as_coordinates",
-            "method": "median of lpx/lpy columns if available",
-            "status": "passed" if median_xy_precision is not None else "not_available",
-            "notes": "Precision proxy, not image resolution.",
+            "method": "mean of median(lpx) and median(lpy) if columns are available",
+            "status": "passed"
+            if mean_axis_median_xy_precision is not None
+            else "not_available",
+            "notes": (
+                "Per-axis median precision proxy, NOT image resolution. "
+                "Legacy alias: median_xy_localization_precision."
+            ),
+            "legacy_alias": "median_xy_localization_precision",
         }
     )
     rows.append(
@@ -3084,9 +3190,11 @@ class RuntimeBenchmark:
             self.cuda_sync()
             end = time.perf_counter()
             end_time = now_iso()
-            elapsed_min = elapsed_minutes_between(start_time, end_time)
-            if elapsed_min is None:
-                elapsed_min = (end - start) / 60.0
+            # time.perf_counter() is already in seconds; prefer it over ISO parsing.
+            elapsed_sec_raw = float(end - start)
+            elapsed_sec_clock = elapsed_seconds_between(start_time, end_time)
+            elapsed_sec = elapsed_sec_raw if elapsed_sec_clock is None else elapsed_sec_clock
+            elapsed_min = elapsed_sec / 60.0
             row: Dict[str, Any] = {
                 "benchmark_layer": "runtime",
                 "stage": stage_name,
@@ -3097,6 +3205,8 @@ class RuntimeBenchmark:
                 "error": error,
                 "start_time": start_time,
                 "end_time": end_time,
+                # Both units are written for downstream consumers; elapsed_sec is canonical.
+                "elapsed_sec": round(elapsed_sec, 6),
                 "elapsed_min": round(elapsed_min, 6),
             }
             row.update(self.get_ram_mb())
@@ -3254,30 +3364,43 @@ class RuntimeBenchmark:
         write_rows_csv(self.rows, self.runtime_csv_path)
 
     def summarize_runtime(self) -> Dict[str, Any]:
-        total = 0.0
-        by_stage: Dict[str, float] = {}
+        total_sec = 0.0
+        by_stage_sec: Dict[str, float] = {}
         for row in self.rows:
-            elapsed = runtime_row_elapsed_min(row)
+            elapsed = runtime_row_elapsed_sec(row)
             stage = str(row.get("stage", "unknown"))
-            total += elapsed
-            by_stage[stage] = by_stage.get(stage, 0.0) + elapsed
+            total_sec += elapsed
+            by_stage_sec[stage] = by_stage_sec.get(stage, 0.0) + elapsed
 
-        if by_stage:
+        # Pick an axis unit: seconds when any stage is sub-minute, minutes otherwise.
+        any_subminute = any(v < 60.0 for v in by_stage_sec.values()) if by_stage_sec else True
+        if any_subminute:
+            plot_values = [float(v) for v in by_stage_sec.values()]
+            ylabel = "Seconds"
+        else:
+            plot_values = [float(v) / 60.0 for v in by_stage_sec.values()]
+            ylabel = "Minutes"
+
+        if by_stage_sec:
             maybe_plot_bar(
-                list(by_stage.keys()),
-                [float(v) for v in by_stage.values()],
+                list(by_stage_sec.keys()),
+                plot_values,
                 self.figures_dir / "stage_runtime_barplot.png",
                 "Runtime by stage",
-                "Minutes",
+                ylabel,
             )
 
         return {
             "runtime_csv": str(self.runtime_csv_path),
             "runtime_json": str(self.runtime_json_path),
             "n_timed_stages": len(self.rows),
-            "total_timed_min": round(total, 6),
+            "total_timed_sec": round(total_sec, 6),
+            "total_timed_min": round(total_sec / 60.0, 6),
+            "time_by_stage_sec": {
+                stage: round(value, 6) for stage, value in sorted(by_stage_sec.items())
+            },
             "time_by_stage_min": {
-                stage: round(value, 6) for stage, value in sorted(by_stage.items())
+                stage: round(value / 60.0, 6) for stage, value in sorted(by_stage_sec.items())
             },
         }
 
@@ -3539,14 +3662,13 @@ class RuntimeBenchmark:
         if not isinstance(export_validation, Mapping):
             export_validation = {}
 
-        total_timed_min = runtime.get("total_timed_min")
-        if total_timed_min is None and runtime.get("total_timed_sec") is not None:
-            total_timed_sec = safe_float(runtime.get("total_timed_sec"))
-            total_timed_min = (
-                round(total_timed_sec / 60.0, 6)
-                if total_timed_sec is not None
-                else None
-            )
+        # Accept either modern (_sec) or legacy (_min) keys, expose both.
+        total_timed_sec = safe_float(runtime.get("total_timed_sec"))
+        total_timed_min = safe_float(runtime.get("total_timed_min"))
+        if total_timed_sec is None and total_timed_min is not None:
+            total_timed_sec = round(total_timed_min * 60.0, 6)
+        if total_timed_min is None and total_timed_sec is not None:
+            total_timed_min = round(total_timed_sec / 60.0, 6)
 
         return {
             "created_at": summary.get("created_at", ""),
@@ -3567,6 +3689,7 @@ class RuntimeBenchmark:
             "cuda_runtime_version": machine.get("cuda_runtime_version", ""),
             "cudnn_version": machine.get("cudnn_version", ""),
             "torch_version": machine.get("torch_version", ""),
+            "total_timed_sec": total_timed_sec,
             "total_timed_min": total_timed_min,
             "n_timed_stages": runtime.get("n_timed_stages"),
             "max_rss_mb": resources.get("max_rss_mb"),
@@ -3630,11 +3753,12 @@ def inspect_runtime_json(path: Path) -> None:
     print(f"Timed stages: {len(stages)}")
     print()
     for row in stages:
-        elapsed_min = runtime_row_elapsed_min(row)
+        elapsed_sec = runtime_row_elapsed_sec(row)
         print(
             f"{row.get('stage', ''):28s} "
             f"batch={str(row.get('batch_index', '')):>4s} "
-            f"time={round(elapsed_min, 6)} min "
+            f"time={round(elapsed_sec, 6)} s "
+            f"({round(elapsed_sec / 60.0, 4)} min) "
             f"status={row.get('status', '')}"
         )
 
