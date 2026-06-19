@@ -1,0 +1,73 @@
+# SMLM LabFlow - Snakemake workflow configuration
+#
+# This drives the registry-driven Snakemake pipeline (workflow/Snakefile). Each
+# stage (localize -> drift -> track -> analyze -> report) is dispatched through
+# the method registry (config/methods.yaml) via `labflow run`. Defaults for each
+# method live in methods.yaml; this file selects methods and overrides params.
+
+# --- inputs -----------------------------------------------------------------
+input_dir: "data/movies"                 # infer: folder of TIFF/OME-TIFF movies
+profile: "profiles/liteloc_unified_example.yaml"
+run_dir: "outputs/snakemake_run"         # calibrate/train/infer nest here; they
+                                         # share run_dir/registry
+
+# --- localization backend (dispatched to run_pipeline.py) -------------------
+backend: "liteloc"
+extra_infer_args: "--export raw"         # passed through to `run_pipeline.py infer`
+
+# --- LiteLoc lifecycle (optional) -------------------------------------------
+# A normal run does infer -> drift -> report against an already-trained model in
+# run_dir/registry. Flip these on to (re)build calibration / model as part of the
+# DAG, or target them directly: `snakemake calibrate`, `snakemake train`.
+calibrate: false
+train: false
+calibrate_input: "data/beads"            # calibrate: bead / PSF z-stack
+train_input: "data/train"                # train: training data
+
+# --- stage selection (each dispatched through config/methods.yaml) ----------
+pixel_size_nm: 127
+units: "nm"                              # units of canonical x/y (nm or pixel)
+
+# drift: none | rcc | aim_julia | dme   (`labflow list --stage drift`)
+drift_method: "rcc"
+drift_params:
+  rcc:        {n_time_bins: 30, render_nm: 20, neighbor_span: 6, max_drift_nm: 1000}
+  aim_julia:  {intersect_nm: 20, track_interval: 500}
+  dme:        {frames_per_bin: 1, coarse_frames_per_bin: 200, use_cuda: true}
+
+# track (optional): localizations -> trajectories. Needs the method's container.
+track: false
+track_method: "magik"
+track_params:
+  magik:      {connectivity_radius: 1.0, n_frames: 3}
+
+# cluster (optional): localizations -> nanoclusters (in-process sklearn).
+cluster: false
+cluster_method: "dbscan"
+cluster_params:
+  dbscan:     {eps: 100, min_samples: 10}
+  optics:     {min_samples: 10}
+  hdbscan:    {min_cluster_size: 20}
+
+# spatial_stats (optional): localizations -> spatial organization metrics.
+spatial_stats: false
+spatial_stats_method: "ripley"
+spatial_stats_params:
+  ripley:          {r_max: 500, n_bins: 50}
+  paircorrelation: {r_max: 500, n_bins: 50}
+
+# counting (optional): clusters -> molecule counts. Methods 'planned' (need impl).
+counting: false
+counting_method: "qpaint"
+
+# phenotype (optional): clusters/cells -> classification. 'planned' (DL env).
+phenotype: false
+phenotype_method: "clusternet"
+
+# segment / qc_audit: registered, run standalone via `labflow run` (planned).
+
+# analyze (optional): trajectories -> per-track properties.
+analyze: false
+analyze_method: "deeptrace"
+analyze_params:
+  deeptrace:  {}

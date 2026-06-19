@@ -17,6 +17,12 @@ datasets
 raw_data
 outputs
 
+envs
+output
+tmp
+figures
+*.docx
+
 *.tif
 *.tiff
 *.ome.tif

@@ -105,7 +105,23 @@ __pycache__/
 .idea/
 .vscode/
 
+# Snakemake
+.snakemake/
+
+# Per-tool environments (recreate from docs/environments.md + lockfiles)
+envs/
+
 # OS
 .DS_Store
 Thumbs.db
 adapters/backend_paths.local.yml
+# machine-specific; use backend_paths.example.yml
+adapters/backend_paths.yml
+
+# Personal / report material (not source)
+*.docx
+figures/
+
+# Local scratch / run outputs (singular forms; plural already ignored above)
+output/
+tmp/

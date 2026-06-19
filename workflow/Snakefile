@@ -1,0 +1,278 @@
+# SMLM LabFlow - registry-driven pipeline
+#
+# Full DAG, every stage dispatched through the method registry (config/methods.yaml)
+# via `labflow run <stage> --method <name>`:
+#
+#   calibrate ─▶ train ─▶ infer ─▶ drift ─▶ track ─▶ analyze ─▶ report
+#   (optional)  (opt.)   (checkpt) (reg)   (opt.)   (opt.)
+#
+# calibrate/train/infer still use run_pipeline.py (localization lifecycle, coupled
+# through run_dir/registry). drift/track/analyze are selected per stage in
+# config.yaml (drift_method / track_method / analyze_method) and dispatched by the
+# unified CLI, so adding a method is a single config/methods.yaml entry. track and
+# analyze are gated by flags so the core localize->drift->report runs without
+# MAGIK/DeepTRACE installed.
+#
+# Run:   snakemake --cores 4
+#        snakemake --cores 4 --config drift_method=aim_julia
+#        snakemake --cores 4 --config track=true analyze=true
+#        snakemake --cores 4 -n
+
+import csv
+import json
+from pathlib import Path
+
+
+configfile: "config/config.yaml"
+
+RUN_DIR = Path(config["run_dir"])
+INFER_DIR = RUN_DIR / "infer"
+RESULTS = INFER_DIR / "results"
+BATCHES = RESULTS / "batches"
+REGISTRY = RUN_DIR / "registry"
+
+# POSIX slashes for every path that appears in a rule (Windows-safe wildcards).
+RUN_S = RUN_DIR.as_posix()
+RESULTS_S = RESULTS.as_posix()
+BATCHES_S = BATCHES.as_posix()
+REGISTRY_S = REGISTRY.as_posix()
+CAL_JSON = f"{REGISTRY_S}/latest_calibration.json"
+MODEL_JSON = f"{REGISTRY_S}/latest_model.json"
+
+PROFILE = config["profile"]
+BACKEND = str(config.get("backend", "liteloc"))
+PIXEL = str(config.get("pixel_size_nm", "")).strip()
+UNITS = config.get("units", "nm")
+PIXEL_ARG = f"--pixel-size {PIXEL}" if PIXEL not in ("", "None") else ""
+
+# Per-stage method selection (drift_backend kept as a fallback alias).
+DRIFT_METHOD = str(config.get("drift_method", config.get("drift_backend", "rcc")))
+TRACK_METHOD = str(config.get("track_method", "magik"))
+CLUSTER_METHOD = str(config.get("cluster_method", "dbscan"))
+SPATIAL_METHOD = str(config.get("spatial_stats_method", "ripley"))
+COUNTING_METHOD = str(config.get("counting_method", "qpaint"))
+PHENOTYPE_METHOD = str(config.get("phenotype_method", "clusternet"))
+ANALYZE_METHOD = str(config.get("analyze_method", "deeptrace"))
+
+DO_CAL = bool(config.get("calibrate", False))
+DO_TRAIN = bool(config.get("train", False))
+DO_TRACK = bool(config.get("track", False))
+DO_CLUSTER = bool(config.get("cluster", False))
+DO_SPATIAL = bool(config.get("spatial_stats", False))
+DO_COUNTING = bool(config.get("counting", False))
+DO_PHENOTYPE = bool(config.get("phenotype", False))
+DO_ANALYZE = bool(config.get("analyze", False))
+
+LABFLOW = "python -m labflow"
+
+
+def param_args(stage):
+    method = {"drift": DRIFT_METHOD, "track": TRACK_METHOD, "cluster": CLUSTER_METHOD,
+              "spatial_stats": SPATIAL_METHOD, "counting": COUNTING_METHOD,
+              "phenotype": PHENOTYPE_METHOD, "analyze": ANALYZE_METHOD}[stage]
+    overrides = (config.get(f"{stage}_params") or {}).get(method, {}) or {}
+    return " ".join(
+        "--param {}={}".format(k, json.dumps(v, separators=(",", ":")))
+        for k, v in overrides.items()
+    )
+
+
+def train_inputs(_w):
+    return [CAL_JSON] if DO_CAL else []
+
+
+def infer_inputs(_w):
+    return [MODEL_JSON] if DO_TRAIN else []
+
+
+def batch_ids(_w):
+    manifest = checkpoints.infer.get().output.manifest
+    ids = []
+    with open(manifest, newline="") as handle:
+        for row in csv.DictReader(handle):
+            rid = row.get("run_id") or row.get("batch_id")
+            if rid:
+                ids.append(rid)
+    return ids
+
+
+def stage_targets(wildcards):
+    """All enabled terminal outputs per batch (drift always; the rest if toggled on)."""
+    targets = []
+    for b in batch_ids(wildcards):
+        targets.append(f"{BATCHES_S}/{b}/drift/drift_correction.json")
+        if DO_TRACK:
+            targets.append(f"{BATCHES_S}/{b}/track/tracks.csv")
+        if DO_CLUSTER:
+            targets.append(f"{BATCHES_S}/{b}/cluster/clusters.csv")
+        if DO_SPATIAL:
+            targets.append(f"{BATCHES_S}/{b}/spatial_stats/spatial_stats.csv")
+        if DO_COUNTING:
+            targets.append(f"{BATCHES_S}/{b}/counting/counts.csv")
+        if DO_PHENOTYPE:
+            targets.append(f"{BATCHES_S}/{b}/phenotype/phenotypes.csv")
+        if DO_ANALYZE:
+            targets.append(f"{BATCHES_S}/{b}/analyze/track_analysis.csv")
+    return targets
+
+
+rule all:
+    input:
+        f"{RESULTS_S}/run_report.html",
+
+
+rule calibrate:
+    output:
+        cal=CAL_JSON,
+    params:
+        indir=config.get("calibrate_input", ""),
+        profile=PROFILE,
+        run=f"{RUN_S}/calibrate",
+        backend=BACKEND,
+    shell:
+        'python run_pipeline.py calibrate -i "{params.indir}" -p "{params.profile}" '
+        '-o "{params.run}" -b "{params.backend}" --overwrite'
+
+
+rule train:
+    input:
+        train_inputs,
+    output:
+        model=MODEL_JSON,
+    params:
+        indir=config.get("train_input", ""),
+        profile=PROFILE,
+        run=f"{RUN_S}/train",
+        backend=BACKEND,
+    shell:
+        'python run_pipeline.py train -i "{params.indir}" -p "{params.profile}" '
+        '-o "{params.run}" -b "{params.backend}" --overwrite'
+
+
+# Localization: the existing pipeline (checkpoint - batch set known only after).
+checkpoint infer:
+    input:
+        infer_inputs,
+    output:
+        manifest=f"{RESULTS_S}/batch_manifest.csv",
+    params:
+        indir=config["input_dir"],
+        profile=PROFILE,
+        run=f"{RUN_S}/infer",
+        backend=BACKEND,
+        extra=config.get("extra_infer_args", ""),
+    shell:
+        'python run_pipeline.py infer -i "{params.indir}" -p "{params.profile}" '
+        '-o "{params.run}" -b "{params.backend}" --overwrite {params.extra}'
+
+
+# Drift correction via the registry/CLI, one job per batch.
+rule drift:
+    input:
+        locs=f"{BATCHES_S}/{{batch}}/canonical_localizations.csv",
+    output:
+        corrected=f"{BATCHES_S}/{{batch}}/drift/drift_corrected_localizations.csv",
+        js=f"{BATCHES_S}/{{batch}}/drift/drift_correction.json",
+        traj=f"{BATCHES_S}/{{batch}}/drift/drift_trajectory.csv",
+    params:
+        method=DRIFT_METHOD,
+        extra=f"{PIXEL_ARG} --units {UNITS} {param_args('drift')}",
+    shell:
+        LABFLOW + ' run drift --method {params.method} '
+        '-i "{input.locs}" -o "{output.corrected}" {params.extra}'
+
+
+# Tracking (optional): drift-corrected localizations -> trajectories.
+rule track:
+    input:
+        locs=f"{BATCHES_S}/{{batch}}/drift/drift_corrected_localizations.csv",
+    output:
+        tracks=f"{BATCHES_S}/{{batch}}/track/tracks.csv",
+    params:
+        method=TRACK_METHOD,
+        extra=param_args("track"),
+    shell:
+        LABFLOW + ' run track --method {params.method} '
+        '-i "{input.locs}" -o "{output.tracks}" {params.extra}'
+
+
+# Cluster calling (optional): drift-corrected localizations -> nanoclusters.
+rule cluster:
+    input:
+        locs=f"{BATCHES_S}/{{batch}}/drift/drift_corrected_localizations.csv",
+    output:
+        clusters=f"{BATCHES_S}/{{batch}}/cluster/clusters.csv",
+    params:
+        method=CLUSTER_METHOD,
+        extra=param_args("cluster"),
+    shell:
+        LABFLOW + ' run cluster --method {params.method} '
+        '-i "{input.locs}" -o "{output.clusters}" {params.extra}'
+
+
+# Spatial statistics (optional): localizations -> organization metrics.
+rule spatial_stats:
+    input:
+        locs=f"{BATCHES_S}/{{batch}}/drift/drift_corrected_localizations.csv",
+    output:
+        stats=f"{BATCHES_S}/{{batch}}/spatial_stats/spatial_stats.csv",
+    params:
+        method=SPATIAL_METHOD,
+        extra=param_args("spatial_stats"),
+    shell:
+        LABFLOW + ' run spatial_stats --method {params.method} '
+        '-i "{input.locs}" -o "{output.stats}" {params.extra}'
+
+
+# Counting (optional): clusters -> molecule counts.
+rule counting:
+    input:
+        clusters=f"{BATCHES_S}/{{batch}}/cluster/clusters.csv",
+    output:
+        counts=f"{BATCHES_S}/{{batch}}/counting/counts.csv",
+    params:
+        method=COUNTING_METHOD,
+        extra=param_args("counting"),
+    shell:
+        LABFLOW + ' run counting --method {params.method} '
+        '-i "{input.clusters}" -o "{output.counts}" {params.extra}'
+
+
+# Phenotyping (optional): clusters/cells -> classification.
+rule phenotype:
+    input:
+        clusters=f"{BATCHES_S}/{{batch}}/cluster/clusters.csv",
+    output:
+        phenotypes=f"{BATCHES_S}/{{batch}}/phenotype/phenotypes.csv",
+    params:
+        method=PHENOTYPE_METHOD,
+        extra=param_args("phenotype"),
+    shell:
+        LABFLOW + ' run phenotype --method {params.method} '
+        '-i "{input.clusters}" -o "{output.phenotypes}" {params.extra}'
+
+
+# Analysis (optional): trajectories -> per-track properties.
+rule analyze:
+    input:
+        tracks=f"{BATCHES_S}/{{batch}}/track/tracks.csv",
+    output:
+        analysis=f"{BATCHES_S}/{{batch}}/analyze/track_analysis.csv",
+    params:
+        method=ANALYZE_METHOD,
+        extra=param_args("analyze"),
+    shell:
+        LABFLOW + ' run analyze --method {params.method} '
+        '-i "{input.tracks}" -o "{output.analysis}" {params.extra}'
+
+
+rule report:
+    input:
+        stage=stage_targets,
+        manifest=f"{RESULTS_S}/batch_manifest.csv",
+    output:
+        html=f"{RESULTS_S}/run_report.html",
+    params:
+        results=RESULTS_S,
+    shell:
+        'python generate_run_report.py --run "{params.results}"'

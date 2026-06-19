@@ -194,6 +194,39 @@ python combine_benchmark_comparisons.py results -o comparison_summary_all_runs.c
 ---
 
 
+## Unified pipeline & CLI (`labflow`)
+
+The pipeline is a chain of stages — `localize → drift → segment → track →
+cluster → spatial_stats → counting → phenotype → analyze → qc_audit → report` —
+where every method is declared once in **`config/methods.yaml`**. One registry
+drives both the **`labflow` CLI** and the **Snakemake pipeline**, so adding a
+method is a single YAML entry that appears in both. Each method runs in the
+environment it needs (`python` in-process, or an isolated `venv`/`conda`/`docker`)
+over a canonical CSV file contract, so conflicting tools (LiteLoc/torch,
+MAGIK/TensorFlow, Julia AIM, Fiji, MATLAB) coexist cleanly.
+
+```bash
+# isolated core env (keeps labflow's deps off your system Python)
+python -m venv envs/labflow && envs/labflow/Scripts/pip install -e ".[light]"
+
+labflow list                                       # every method, grouped by stage
+labflow run drift -b aim_julia -i locs.csv -o out/corrected.csv   # -b selects the backend
+labflow run cluster -b dbscan  --gui -i locs.csv   # --gui: open the backend's GUI
+labflow review outputs/.../results --with napari   # inspect a run in napari
+labflow pipeline --cores 4 --config cluster=true spatial_stats=true
+```
+
+Backends run now (in-process): `drift` (none/rcc/aim_julia/dme), `cluster`
+(dbscan/optics/hdbscan), `spatial_stats` (ripley/paircorrelation/nnd/voronoi),
+`track` (trackpy). The rest (DECODE, FD-DeepLoc, Cellpose, StarDist, MAGIK, MIRO,
+DeepTRACE, TrackMate, ClusterNet, qPAINT, …) are registered and wired, `ready`
+once their environment is built. See [docs/methods.md](docs/methods.md) (add a
+method), [docs/environments.md](docs/environments.md) (per-tool envs), and
+[docs/snakemake_backends.md](docs/snakemake_backends.md) (drift internals).
+
+---
+
+
 ## Roadmap
 
 - Additional backend adapters (DECODE, DeepSTORM, FD-DeepLoc)

@@ -1,0 +1,600 @@
+# SMLM LabFlow - the method registry (single source of truth).
+#
+# Every method is one entry. The CLI (`labflow`) and the Snakemake pipeline both
+# read this file, so adding a method here makes it available in both at once.
+# Select a backend with `labflow run <stage> -b <name>`. See docs/methods.md.
+#
+# Fields:
+#   stage    calibrate train localize drift segment track cluster
+#            spatial_stats counting phenotype analyze qc_audit report
+#   runtime  python | external | local | venv | conda | docker
+#   entry    "module:function"   (python runtime; called in-process)
+#   bind     fixed kwargs merged into params  (python runtime)
+#   command  arg-list template   (external/local/venv/conda/docker)
+#            tokens: {input} {output} {repo} {params_json} {p.<key>}
+#   image/env  container image (docker) / venv path or conda env name
+#   input/output  contract filenames inside the work dir (subprocess runtimes)
+#   gui      how to open this backend's GUI (with `labflow run ... --gui`):
+#            `napari` | an arg-list command (e.g. ["cellpose"], ["fiji","{input}"]).
+#            Absent -> --gui falls back to napari so every backend gets a viewer.
+#   params   default parameters (overridable on the CLI / in config)
+#   status   ready   = runs now
+#            planned = registered + slotted into the flow; needs its env/adapter
+#                      (run gives a clear message instead of a confusing error)
+
+stages: [calibrate, train, localize, drift, render, segment, track, cluster,
+         spatial_stats, counting, phenotype, analyze, metrics, qc_audit, report]
+
+methods:
+
+  # === localize: raw movies -> canonical localizations =======================
+  liteloc:
+    stage: localize
+    runtime: external
+    command: ["python", "{repo}/run_pipeline.py", "infer",
+              "-i", "{input}", "-p", "{p.profile}", "-o", "{output}",
+              "-b", "liteloc", "--overwrite"]
+    params: {profile: "profiles/liteloc_unified_example.yaml"}
+    status: ready
+    description: "LiteLoc deep-learning localization (wraps run_pipeline.py: calibrate/train/infer)."
+  decode:
+    stage: localize
+    runtime: conda
+    env: decode
+    command: ["python", "{repo}/adapters/decode_localize.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: frames.tif
+    output: localizations.csv
+    gui: napari
+    params: {model: "", param_file: ""}        # trained ckpt + DECODE param yaml
+    status: planned
+    install: {conda_file: config/envs/decode.yml}   # `labflow install decode` builds the env
+    description: "DECODE DL localizer (Speiser/Turaga 2021). Own conda env; needs a trained model + DECODE param file."
+  fd_deeploc:
+    stage: localize
+    runtime: conda
+    env: fd_deeploc
+    command: ["python", "{repo}/adapters/fd_deeploc_localize.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}",
+              "--src", "{repo}/envs/fd_deeploc_src"]
+    input: frames.tif
+    output: localizations.csv
+    gui: napari
+    params: {model: "", calibration: ""}
+    status: planned
+    install:
+      conda_file: config/envs/fd_deeploc.yml          # builds the env
+      git: "https://github.com/Li-Lab-SUSTech/FD-DeepLoc"   # + clones the tool
+    description: "FD-DeepLoc field-dependent DL localizer (Fu 2023). Own conda env + cloned repo; train/infer lifecycle."
+  deepstorm3d:
+    stage: localize
+    runtime: conda
+    env: deepstorm3d
+    command: ["python", "{repo}/adapters/deepstorm3d_localize.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}",
+              "--src", "{repo}/envs/deepstorm3d_src"]
+    input: frames.tif
+    output: localizations.csv
+    gui: napari
+    params: {model: ""}
+    status: planned
+    install:
+      conda_file: config/envs/deepstorm3d.yml         # builds the env
+      git: "https://github.com/EliasNehme/DeepSTORM3D"      # + clones the tool
+    description: "DeepSTORM3D dense 3D DL localizer (Nehme 2020). Own conda env + cloned repo; needs a trained model."
+
+  # === drift: localizations -> drift-corrected localizations =================
+  # One in-process adapter (driftcorr); `backend` (bind) picks the method.
+  none:
+    stage: drift
+    runtime: python
+    entry: "labflow.stages.drift:run"
+    bind: {backend: none}
+    output: drift_corrected_localizations.csv
+    params: {}
+    status: ready
+    description: "No correction (passthrough)."
+  rcc:
+    stage: drift
+    runtime: python
+    entry: "labflow.stages.drift:run"
+    bind: {backend: rcc}
+    output: drift_corrected_localizations.csv
+    params: {n_time_bins: 30, render_nm: 20, neighbor_span: 6, max_drift_nm: 1000}
+    status: ready
+    description: "Redundant cross-correlation (Wang 2014). Pure numpy."
+  fiducial:
+    stage: drift
+    runtime: python
+    entry: "labflow.stages.drift:run"
+    bind: {backend: fiducial}
+    output: drift_corrected_localizations.csv
+    params: {search_radius_nm: 100, min_frame_fraction: 0.5}   # or fiducials=[[x,y],...]
+    status: ready
+    description: "Fiducial-marker drift: track bright persistent markers (gold/bead). Pure numpy; needs fiducials in the FOV."
+  aim_julia:
+    stage: drift
+    runtime: python
+    entry: "labflow.stages.drift:run"
+    bind: {backend: aim_julia}
+    output: drift_corrected_localizations.csv
+    params: {intersect_nm: 20, track_interval: 500}
+    status: ready
+    install: {requires_cmd: julia}      # detect the Julia binary on PATH
+    description: "Faithful Julia port of AIM (Ma et al. 2024). Needs Julia."
+  dme:
+    stage: drift
+    runtime: python
+    entry: "labflow.stages.drift:run"
+    bind: {backend: dme}
+    output: drift_corrected_localizations.csv
+    params: {frames_per_bin: 1, coarse_frames_per_bin: 200, use_cuda: true}
+    status: ready
+    install: {probe: dme}               # detect the dme package (install from github)
+    description: "Drift at minimum entropy (Cnossen 2021). Needs the dme package."
+
+  # === render: localizations -> super-resolution image =======================
+  render:
+    stage: render
+    runtime: python
+    entry: "labflow.stages.render:run"
+    output: sr_image.tif
+    params: {render_nm: 10, mode: histogram}   # mode: histogram | gaussian (sigma_nm)
+    status: ready
+    install: {extra: stats, probe: tifffile}
+    description: "Super-resolution image rendering (histogram/Gaussian). Writes a TIFF. numpy/scipy."
+
+  # === segment: reference/SR image -> cell/ROI masks =========================
+  cellpose:
+    stage: segment
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-cellpose:latest   # prebuilt, published by CI
+    command: ["python", "/opt/cellpose/run_cellpose.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: image.tif
+    output: masks.tif
+    gui: ["cellpose"]                  # native Cellpose GUI (labelling/correction)
+    params: {diameter: 0, model_type: cyto3}
+    status: planned
+    install: {pull: true, context: docker/cellpose}   # `labflow install cellpose` pulls;
+    description: "Cellpose segmentation (prebuilt image; --build to build locally)."
+  stardist:
+    stage: segment
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-stardist:latest   # prebuilt, published by CI
+    command: ["python", "/opt/stardist/run_stardist.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: image.tif
+    output: masks.tif
+    gui: napari                        # StarDist also runs as a napari plugin
+    params: {model: 2D_versatile_fluo}
+    status: planned
+    install: {pull: true, context: docker/stardist}
+    description: "StarDist star-convex nucleus/ROI segmentation (Schmidt 2018). Prebuilt image; --build to build locally."
+  microsam:
+    stage: segment
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-microsam:latest   # prebuilt, published by CI
+    command: ["python", "/opt/microsam/run_microsam.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: image.tif
+    output: masks.tif
+    gui: napari                        # micro-SAM has a napari annotation plugin
+    params: {model: vit_b_lm}          # ViT-B fine-tuned for light microscopy
+    status: planned
+    install: {pull: true, context: docker/microsam}
+    description: "micro-SAM: Segment Anything for microscopy (Archit 2024), automatic instance segmentation. Prebuilt image."
+  omnipose:
+    stage: segment
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-omnipose:latest   # prebuilt, published by CI
+    command: ["python", "/opt/omnipose/run_omnipose.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: image.tif
+    output: masks.tif
+    gui: napari
+    params: {model_type: bact_phase_omni}
+    status: planned
+    install: {pull: true, context: docker/omnipose}
+    description: "Omnipose segmentation for elongated/bacterial cells (Cutler 2022). Prebuilt image; --build to build locally."
+
+  # === track: localizations -> trajectories ==================================
+  magik:
+    stage: track
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-magik:latest   # prebuilt, published by CI
+    gpu: true                                        # adds --gpus all (docker) / --nv (apptainer)
+    command: ["python", "/opt/magik/run_magik.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: localizations.csv
+    output: tracks.csv
+    params: {connectivity_radius: 1.0, n_frames: 3}
+    status: planned
+    install: {pull: true, context: docker/magik}
+    description: "MAGIK GNN tracking (DeepTrackAI 2023). GPU; pulls prebuilt image."
+  trackmate:
+    stage: track
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-trackmate:latest   # prebuilt Fiji image, published by CI
+    command: ["ImageJ-linux64", "--headless", "--console", "--run",
+              "/opt/trackmate/run_trackmate.py", "input='{input}',output='{output}'"]
+    input: localizations.csv
+    output: tracks.csv
+    gui: ["fiji"]                      # open Fiji -> TrackMate for interactive editing
+    params: {linking_max_distance: 500, gap_closing_max_frame_gap: 2}
+    status: planned
+    install: {pull: true, context: docker/trackmate}
+    description: "TrackMate tracking via headless Fiji (Tinevez 2017 / Ershov 2022). Prebuilt image; links pre-detected localizations (binding point)."
+  spot_on:
+    stage: track
+    runtime: venv
+    env: spot_on
+    command: ["python", "{repo}/adapters/spot_on_track.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: tracks.csv               # post-tracking analysis: consumes trajectories
+    output: tracks.csv              # tracks pass through; spoton_kinetics.csv alongside
+    gui: napari
+    params: {}
+    status: planned
+    install: {pip: ["fastspt", "pandas", "numpy"]}
+    description: "Spot-On diffusion analysis (Hansen 2018): post-tracking 2-state kinetics via fastspt. Tracks pass through; kinetics written alongside."
+  trackpy:
+    stage: track
+    runtime: python
+    entry: "labflow.stages.track:run"
+    output: tracks.csv
+    params: {search_range: 500, memory: 3}
+    status: planned
+    install: {extra: track, probe: trackpy}
+    description: "trackpy linking (Crocker-Grier). In-process; `labflow install trackpy`."
+  swift:
+    stage: track
+    runtime: local
+    command: ["python", "{repo}/adapters/swift_track.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: localizations.csv
+    output: tracks.csv
+    params: {}
+    status: planned
+    install: {requires_cmd: swift}    # external binary; request from the authors
+    description: "swift multi-state single-particle tracking (Heilemann lab). Needs the swift binary on PATH (request from authors)."
+
+  # === cluster: localizations -> nanoclusters ================================
+  # One in-process adapter; `algorithm` (bind) selects the scikit-learn method.
+  dbscan:
+    stage: cluster
+    runtime: python
+    entry: "labflow.stages.cluster:run"
+    bind: {algorithm: dbscan}
+    output: clusters.csv
+    params: {eps: 100, min_samples: 10}
+    status: planned
+    install: {extra: cluster, probe: sklearn}
+    description: "DBSCAN density clustering (scikit-learn)."
+  optics:
+    stage: cluster
+    runtime: python
+    entry: "labflow.stages.cluster:run"
+    bind: {algorithm: optics}
+    output: clusters.csv
+    params: {min_samples: 10}
+    status: planned
+    install: {extra: cluster, probe: sklearn}
+    description: "OPTICS density clustering (scikit-learn)."
+  hdbscan:
+    stage: cluster
+    runtime: python
+    entry: "labflow.stages.cluster:run"
+    bind: {algorithm: hdbscan}
+    output: clusters.csv
+    params: {min_cluster_size: 20}
+    status: planned
+    install: {extra: cluster, probe: sklearn}
+    description: "HDBSCAN hierarchical density clustering (scikit-learn>=1.3)."
+  locan:
+    stage: cluster
+    runtime: python
+    entry: "labflow.stages.cluster_locan:run"
+    output: clusters.csv
+    params: {algorithm: dbscan, eps: 100, min_samples: 10}
+    status: planned
+    install: {extra: stats, probe: locan}
+    description: "DBSCAN/HDBSCAN via locan, with rich per-cluster properties (locan 0.21)."
+  miro:
+    stage: cluster
+    runtime: venv
+    env: "envs/miro"
+    command: ["python", "{repo}/labflow/stages/miro_run.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: localizations.csv
+    output: clusters.csv
+    params: {eps: 1.0, min_samples: 10, model: ""}
+    status: planned
+    install: {git: "https://github.com/DeepTrackAI/MIRO", requirements_in_src: "requirements.txt"}
+    description: "MIRO rGNN-enhanced clustering (DeepTrackAI 2025). DL; needs the 'miro' env + trained model."
+  srtesseler:
+    stage: cluster
+    runtime: python
+    entry: "labflow.stages.cluster_voronoi:run"
+    output: clusters.csv
+    params: {density_factor: 2.0, min_cluster_size: 5}
+    status: ready
+    install: {extra: stats, probe: scipy}
+    description: "Voronoi-tessellation clustering (SR-Tesseler, Levet 2015). Pure numpy/scipy."
+  caml:
+    stage: cluster
+    runtime: venv
+    env: caml
+    command: ["python", "{repo}/adapters/caml_cluster.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}",
+              "--src", "{repo}/envs/caml_src"]
+    input: localizations.csv
+    output: clusters.csv
+    params: {model: ""}
+    status: planned
+    install: {pip: ["scikit-learn", "tensorflow", "pandas", "numpy"]}
+    description: "CAML: ML cluster analysis (Williamson 2020). DL; own env + CAML source/model (binding point)."
+  bayesian:
+    stage: cluster
+    runtime: venv
+    env: bayesian_cluster
+    command: ["python", "{repo}/adapters/bayesian_cluster.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: localizations.csv
+    output: clusters.csv
+    params: {}
+    status: planned
+    install: {pip: ["numpy", "scipy", "pandas", "scikit-learn"]}
+    description: "Bayesian model-based cluster analysis (Griffie/Owen 2016). Own env (binding point)."
+
+  # === spatial_stats: localizations -> spatial organization metrics ==========
+  # One in-process adapter; `metric` (bind) selects the statistic.
+  ripley:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: ripley}
+    output: spatial_stats.csv
+    params: {r_max: 500, n_bins: 50}
+    status: planned
+    install: {extra: stats, probe: sklearn}
+    description: "Ripley's K/L function (numpy/sklearn neighbors)."
+  paircorrelation:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: paircorrelation}
+    output: spatial_stats.csv
+    params: {r_max: 500, n_bins: 50}
+    status: planned
+    install: {extra: stats, probe: sklearn}
+    description: "Pair-correlation function g(r)."
+  nnd:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: nnd}
+    output: spatial_stats.csv
+    params: {}
+    status: planned
+    install: {extra: stats, probe: sklearn}
+    description: "Nearest-neighbour distance distribution."
+  voronoi:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: voronoi}
+    output: spatial_stats.csv
+    params: {}
+    status: planned
+    install: {extra: stats, probe: scipy}
+    description: "Voronoi tessellation densities (needs scipy)."
+  gfunction:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: gfunction}
+    output: spatial_stats.csv
+    params: {r_max: 500, n_bins: 50}
+    status: ready
+    install: {extra: stats, probe: sklearn}
+    description: "Nearest-neighbour G-function G(r) (cumulative NND distribution)."
+  cbc:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: cbc}
+    output: spatial_stats.csv
+    params: {r_max: 500, n_bins: 20}     # 2-colour: pass channel2=<ch2.csv>; defaults to self
+    status: ready
+    install: {extra: stats, probe: scipy}
+    description: "Coordinate-based colocalization, CBC (Malkusch 2012): per-localization C in [-1,1]. Pass channel2=<ch2.csv>."
+  crosscorrelation:
+    stage: spatial_stats
+    runtime: python
+    entry: "labflow.stages.spatial_stats:run"
+    bind: {metric: crosscorrelation}
+    output: spatial_stats.csv
+    params: {r_max: 500, n_bins: 50}     # 2-colour cross g(r); pass channel2=<ch2.csv>
+    status: ready
+    install: {extra: stats, probe: scipy}
+    description: "Two-colour cross-correlation g_AB(r). Pass channel2=<ch2.csv>; defaults to self."
+
+  # === counting: clusters/localizations -> molecule counts ===================
+  qpaint:
+    stage: counting
+    runtime: python
+    entry: "labflow.stages.counting:run"
+    bind: {method: qpaint}
+    output: counts.csv
+    params: {unit_influx: 0.0}          # influx of one docking site (calib); 0 -> index only
+    status: ready
+    description: "qPAINT counting from DNA-PAINT blinking kinetics (Jungmann 2016). In-core."
+  blink:
+    stage: counting
+    runtime: python
+    entry: "labflow.stages.counting:run"
+    bind: {method: blink}
+    output: counts.csv
+    params: {blinks_per_molecule: 1.0, max_gap: 1}
+    status: ready
+    description: "Blink-based molecular counting / PALM stoichiometry (count blink episodes per cluster). In-core."
+  ibfcs:
+    stage: counting
+    runtime: python
+    entry: "labflow.stages.counting:run"
+    bind: {method: ibfcs}
+    output: counts.csv
+    params: {}
+    status: planned
+    description: "Imaging FCS+ counting. Implementation pending."
+
+  # === phenotype: clusters/cells -> classification ===========================
+  clusternet:
+    stage: phenotype
+    runtime: venv
+    env: clusternet
+    command: ["python", "{repo}/adapters/clusternet_phenotype.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}",
+              "--src", "{repo}/envs/clusternet_src"]
+    input: clusters.csv
+    output: phenotypes.csv
+    gui: napari
+    params: {model: ""}
+    status: planned
+    install: {pip: ["torch", "numpy", "pandas", "scikit-learn"]}
+    description: "ClusterNet GNN phenotyping of nanoclusters. DL; own env + ClusterNet source/model (binding point)."
+
+  # === analyze: trajectories -> per-track properties =========================
+  msd:
+    stage: analyze
+    runtime: python
+    entry: "labflow.stages.analyze_msd:run"
+    output: track_analysis.csv
+    params: {max_lag: 4, frame_interval: 1.0, min_length: 3}
+    status: ready
+    description: "Per-track MSD diffusion analysis: D, anomalous exponent alpha, length, Rg. Pure numpy."
+  deeptrace:
+    stage: analyze
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-deeptrace:latest   # prebuilt, published by CI
+    gpu: true
+    command: ["python", "/opt/deeptrace/run_deeptrace.py",
+              "--tracks", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: tracks.csv
+    output: track_analysis.csv
+    params: {}
+    status: planned
+    install: {pull: true, context: docker/deeptrace}
+    description: "DeepTRACE DL track analysis (2026). Prebuilt image (binding point)."
+  vbspt:
+    stage: analyze
+    runtime: venv
+    env: vbspt
+    command: ["python", "{repo}/adapters/vbspt_analyze.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: tracks.csv
+    output: track_analysis.csv
+    params: {}
+    status: planned
+    install: {pip: ["numpy", "scipy", "pandas"]}
+    description: "vbSPT variational-Bayes HMM diffusive states (Persson 2013). Own env (binding point)."
+  andi:
+    stage: analyze
+    runtime: venv
+    env: andi
+    command: ["python", "{repo}/adapters/andi_analyze.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: tracks.csv
+    output: track_analysis.csv
+    params: {}
+    status: planned
+    install: {pip: ["andi-datasets", "numpy", "pandas"]}
+    description: "AnDi anomalous-diffusion exponent/model DL inference (Munoz-Gil 2021/2024). Own env (binding point)."
+  deepspt:
+    stage: analyze
+    runtime: docker
+    image: ghcr.io/rozadibrahim/smlm-deepspt:latest   # prebuilt, published by CI
+    gpu: true
+    command: ["python", "/opt/deepspt/run_deepspt.py",
+              "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
+    input: tracks.csv
+    output: track_analysis.csv
+    params: {}
+    status: planned
+    install: {pull: true, context: docker/deepspt}
+    description: "DeepSPT diffusional-fingerprinting DL (Jacobsen 2024). Prebuilt image (binding point)."
+
+  # === metrics: localizations -> resolution / precision ======================
+  frc:
+    stage: metrics
+    runtime: python
+    entry: "labflow.stages.metrics:run"
+    bind: {metric: frc}
+    output: metrics.csv
+    params: {render_nm: 10}
+    status: ready
+    description: "Fourier Ring Correlation resolution (Nieuwenhuizen 2013). Pure numpy; writes frc_curve.csv alongside."
+  nena:
+    stage: metrics
+    runtime: python
+    entry: "labflow.stages.metrics:run"
+    bind: {metric: nena}
+    output: metrics.csv
+    params: {}
+    status: ready
+    install: {extra: stats, probe: scipy}
+    description: "NeNA localization precision (Endesfelder 2014). numpy/scipy."
+
+  # === qc_audit: run metrics -> quality flags ================================
+  randomforest:
+    stage: qc_audit
+    runtime: python
+    entry: "labflow.stages.qc_audit:run"
+    bind: {model: randomforest}
+    output: qc_audit.csv
+    params: {contamination: 0.05}       # unsupervised flag fraction; or pass model=<path>
+    status: planned
+    install: {extra: cluster, probe: sklearn}
+    description: "QC audit over quality metrics (scikit-learn). Unsupervised by default; model=<path> for a trained one."
+  xgboost:
+    stage: qc_audit
+    runtime: python
+    entry: "labflow.stages.qc_audit:run"
+    bind: {model: xgboost}
+    output: qc_audit.csv
+    params: {}                          # supervised: pass model_path=<trained model>
+    status: planned
+    install: {extra: ml, probe: xgboost}
+    description: "XGBoost QC audit (supervised; needs a trained model_path). In-core."
+  lightgbm:
+    stage: qc_audit
+    runtime: python
+    entry: "labflow.stages.qc_audit:run"
+    bind: {model: lightgbm}
+    output: qc_audit.csv
+    params: {}                          # supervised: pass model_path=<trained model>
+    status: planned
+    install: {extra: ml, probe: lightgbm}
+    description: "LightGBM QC audit (supervised; needs a trained model_path). In-core."
+
+  # === self-test =============================================================
+  _selftest_local:
+    stage: test
+    runtime: local
+    command: ["python", "-c",
+              "import shutil,sys; shutil.copy(sys.argv[1], sys.argv[2])",
+              "{input}", "{output}"]
+    input: in.csv
+    output: out.csv
+    status: ready
+    description: "Round-trips a CSV through a local subprocess (mechanism check)."
+  _docker_selftest:
+    stage: test
+    runtime: docker
+    image: alpine:latest
+    command: ["cp", "{input}", "{output}"]
+    input: in.csv
+    output: out.csv
+    status: ready
+    description: "Round-trips a CSV through an alpine container (docker path check)."

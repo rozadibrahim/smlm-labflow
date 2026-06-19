@@ -1,0 +1,22 @@
+# requirements/workflow.txt
+# Dependencies for the Snakemake workflow and the pluggable drift-correction
+# backends (driftcorr/). numpy/pandas are already part of the LiteLoc env;
+# they are listed so the workflow can run in a minimal environment too.
+
+snakemake>=8,<9
+numpy
+pandas
+
+# Optional - scipy gives AIM cubic-spline drift interpolation
+# (driftcorr falls back to linear interpolation if scipy is absent).
+# scipy
+
+# Optional - the `aim_julia` backend (faithful port of the authors' AIM) needs a
+# Julia runtime on PATH; no Julia packages required (stdlib only):
+#   winget install Julialang.Juliaup      # Windows
+#   curl -fsSL https://install.julialang.org | sh   # macOS / Linux
+
+# Optional - state-of-the-art DME drift backend (drift_backend: dme).
+# Not on PyPI; install from source and its CUDA/build deps:
+#   git clone https://github.com/qnano/drift-estimation
+#   pip install -e drift-estimation

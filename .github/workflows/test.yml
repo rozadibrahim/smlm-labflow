@@ -1,0 +1,34 @@
+name: test
+
+# The verification engine: on every push/PR, install the light core and run the unit
+# tests + the end-to-end conformance smoke test on Linux. This proves the in-core
+# backends (drift/cluster/spatial_stats/counting/analyze/metrics/render/qc) actually
+# run and the file contracts hold -- continuously, not just on the author's laptop.
+# Heavy tools (GPU/Docker/Fiji) SKIP here; they are validated separately on a GPU box.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"      # labflow core needs >=3.11 (snakemake 8)
+
+      - name: Install the light core + dev tools
+        run: pip install -e ".[light,dev]"
+
+      - name: Lint the method registry
+        run: labflow doctor
+
+      - name: Unit tests
+        run: pytest labflow/tests driftcorr/tests -q
+
+      - name: End-to-end conformance (in-core backends must pass)
+        run: labflow conformance
