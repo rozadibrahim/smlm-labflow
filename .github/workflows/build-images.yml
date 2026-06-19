@@ -35,6 +35,14 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Free disk space (large CUDA/conda images)
+        if: steps.gate.outputs.skip != 'true' && contains(fromJSON('["magik","deeptrace","deepspt","microsam"]'), matrix.tool)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          df -h /
+
       - name: Set up Buildx
         if: steps.gate.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
