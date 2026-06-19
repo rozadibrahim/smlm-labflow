@@ -20,6 +20,11 @@
 #
 # Prereqs: the GHCR images must be built (push a v* tag) AND public, and Python >=3.11
 # must be available (labflow core needs it; pods often ship 3.10 -> install python3.11).
+#
+# Reproducibility knobs (env vars):
+#   APPTAINER_VERSION=1.3.6   pin the exact Apptainer release (else apt/PPA latest)
+#   PY=python3.11             interpreter for the labflow core env
+# The exact engine version that ran is printed in step 3 regardless.
 # =============================================================================
 set -uo pipefail
 
@@ -51,17 +56,32 @@ if labflow conformance >/tmp/conf.log 2>&1; then
 else no "conformance"; tail -8 /tmp/conf.log; fi
 
 echo "== 3. container engine (a standard pod has no docker daemon) =="
+# Reproducibility: set APPTAINER_VERSION (e.g. 1.3.6) to install that EXACT release from
+# the official .deb; otherwise the distro's apt/PPA build (latest) is used. Either way the
+# exact engine version that ran is recorded below.
+APPTAINER_VERSION="${APPTAINER_VERSION:-}"
 if docker info >/dev/null 2>&1; then ENGINE=docker
 elif command -v apptainer >/dev/null 2>&1; then ENGINE=apptainer
 else
-  echo "  installing apptainer (daemonless, works on pods)..."
+  echo "  installing apptainer (daemonless, works on pods)${APPTAINER_VERSION:+ v$APPTAINER_VERSION}..."
+  if [ -n "$APPTAINER_VERSION" ]; then
+    deb="apptainer_${APPTAINER_VERSION}_amd64.deb"
+    url="https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/${deb}"
+    { curl -fsSL -o "/tmp/$deb" "$url" && $SUDO apt-get install -y -qq "/tmp/$deb"; } >/dev/null 2>&1 || true
+  fi
+  command -v apptainer >/dev/null 2>&1 || \
   { $SUDO apt-get update -qq && $SUDO apt-get install -y -qq apptainer; } >/dev/null 2>&1 || \
   { $SUDO add-apt-repository -y ppa:apptainer/ppa && $SUDO apt-get update -qq && \
     $SUDO apt-get install -y -qq apptainer; } >/dev/null 2>&1 || true
   command -v apptainer >/dev/null 2>&1 && ENGINE=apptainer || ENGINE=none
 fi
 export LABFLOW_CONTAINER_ENGINE="$ENGINE"
-echo "  engine = $ENGINE"
+ver="n/a"
+[ "$ENGINE" = "apptainer" ] && ver="$(apptainer --version 2>/dev/null || echo unknown)"
+[ "$ENGINE" = "docker" ] && ver="$(docker --version 2>/dev/null || echo unknown)"
+echo "  engine = $ENGINE ($ver)"
+[ -n "$APPTAINER_VERSION" ] && [ "$ENGINE" = "apptainer" ] && \
+  case "$ver" in *"$APPTAINER_VERSION"*) ok "apptainer pinned to $APPTAINER_VERSION";; *) sk "apptainer pin requested ($APPTAINER_VERSION) but got: $ver";; esac
 
 echo "== 4. synthetic test image =="
 python - <<'PY'
