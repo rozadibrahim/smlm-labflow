@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: SMLM LabFlow
+message: "If you use this software, please cite it using these metadata."
+type: software
+authors:
+  - family-names: Ibrahim
+    given-names: Rozad
+    affiliation: "ESBS, University of Strasbourg"
+repository-code: "https://github.com/rozadibrahim/smlm-labflow"
+license: MIT
+version: 0.3.0
+keywords:
+  - SMLM
+  - super-resolution microscopy
+  - single-molecule localization
+  - bioimage analysis
+  - reproducible pipeline
+abstract: >-
+  A registry-driven pipeline for single-molecule localization microscopy (SMLM): one CLI
+  and two interchangeable workflow engines (Snakemake, Nextflow) drive ~50 methods across
+  the localize, drift, segment, track, cluster, spatial-statistics, counting, analyze,
+  metrics and render stages. Each method runs isolated over a canonical-CSV file contract,
+  so conflicting tools coexist without dependency clashes.

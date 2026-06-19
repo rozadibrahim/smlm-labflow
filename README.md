@@ -4,9 +4,22 @@ A modular pipeline wrapper for **Single-Molecule Localization Microscopy (SMLM)*
 
 It handles the engineering overhead — QC, calibration, training, inference, export, benchmarking, and reporting — so you can focus on the science.
 
-> **Status:** ready for lab use — actively developed  
-> **Current backend:** LiteLoc  
-> **Architecture:** backend-agnostic (DECODE, DeepSTORM, FD-DeepLoc adapters can be added)
+> **Status:** active — ~50 methods across 13 stages; 24 run in-core out of the box  
+> **Install:** [docs/install.md](docs/install.md) — conda / pixi / napari (lab users) **or** pip / CLI / HPC (developers)  
+> **Architecture:** registry-driven — one [`config/methods.yaml`](config/methods.yaml) drives the CLI **and** Snakemake + Nextflow
+
+### Try it in 30 seconds (no microscope data)
+
+```bash
+pip install -e ".[light]"      # or, when published:  mamba install -c conda-forge smlm-labflow
+labflow demo                   # synthetic end-to-end: drift -> cluster -> counting -> stats -> metrics -> render -> track -> analyze
+labflow conformance            # shows which methods actually run on your machine
+labflow list                   # every method, grouped by stage
+```
+
+Biologists can instead use the **napari plugin** (Plugins → *Open LabFlow run*) or a locked
+**pixi** environment — see [docs/install.md](docs/install.md). Heavy tools install on demand
+(`labflow install cellpose`) as isolated, prebuilt images.
 
 ---
 

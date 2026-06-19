@@ -1,0 +1,25 @@
+name: pixi-lock
+
+# Solve pixi.toml for all platforms and produce pixi.lock (the cross-platform, bit-for-bit
+# reproducible lockfile labs install from). Runs when pixi.toml changes, or on demand.
+# Download the artifact and commit pixi.lock (one file covers win/linux/macos).
+
+on:
+  push:
+    paths: ["pixi.toml"]
+  workflow_dispatch:
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          run-install: false
+      - name: Solve all platforms
+        run: pixi lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixi-lock
+          path: pixi.lock

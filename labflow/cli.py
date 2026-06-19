@@ -230,6 +230,14 @@ def doctor_cmd():
     click.echo()
 
 
+@cli.command("demo")
+@click.option("-o", "--out", "outdir", default="demo_out", help="Output directory.")
+def demo_cmd(outdir: str):
+    """Run the in-core pipeline end-to-end on synthetic data (no microscope data needed)."""
+    from .demo import run_demo
+    run_demo(outdir)
+
+
 @cli.command("conformance")
 @click.option("--stage", default=None, help="Only test methods of this stage.")
 def conformance_cmd(stage: Optional[str]):
