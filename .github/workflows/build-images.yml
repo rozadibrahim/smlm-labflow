@@ -38,10 +38,13 @@ jobs:
       - name: Free disk space (large CUDA/conda images)
         if: steps.gate.outputs.skip != 'true' && contains(fromJSON('["magik","deeptrace","deepspt","microsam"]'), matrix.tool)
         run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
-                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          echo "disk before:"; df -h /
+          # reclaim ~28 GB of preinstalled tooling the image build does not need
+          # (android ~12 GB, hostedtoolcache ~10 GB, dotnet, ghc, boost)
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache /usr/share/dotnet \
+                      /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/az
           sudo docker image prune -af || true
-          df -h /
+          echo "disk after:"; df -h /
 
       - name: Set up Buildx
         if: steps.gate.outputs.skip != 'true'
