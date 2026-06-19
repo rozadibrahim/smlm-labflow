@@ -1,0 +1,63 @@
+# Pixi manifest -- reproducible, cross-platform environments from conda-forge.
+#
+# Biologist-friendly, locked, no Docker needed. `pixi install` builds the env from a
+# committed pixi.lock that pins every dependency bit-for-bit on Windows/macOS/Linux:
+#   pixi run labflow doctor
+#   pixi run -e light labflow conformance
+#   pixi shell -e gui          # then: labflow review <run> --with napari
+#
+# Generate / refresh the lock on any machine with pixi:  pixi install   (commit pixi.lock)
+# Offline / air-gapped microscope PCs:  `pixi-pack` ships the solved env as one archive.
+#
+# This sits ALONGSIDE the pip extras (pyproject.toml), `labflow install`, and bootstrap.py.
+# It does NOT replace the developer path -- it adds a turnkey, locked path for other labs.
+
+[project]
+name = "smlm-labflow"
+version = "0.3.0"
+description = "Reproducible orchestration and benchmarking for SMLM."
+channels = ["conda-forge"]
+platforms = ["linux-64", "win-64", "osx-64", "osx-arm64"]
+
+[dependencies]                       # core (conda-forge, cross-platform)
+python = ">=3.11"
+click = ">=8"
+numpy = "*"
+pandas = "*"
+pyyaml = "*"
+matplotlib-base = "*"
+
+[pypi-dependencies]                  # the package itself + snakemake (pip across all OSes)
+smlm-labflow = { path = ".", editable = true }
+snakemake = ">=8,<9"
+
+[feature.cluster.dependencies]
+scikit-learn = ">=1.3"
+
+[feature.track.dependencies]
+trackpy = "*"
+
+[feature.stats.dependencies]
+scikit-learn = ">=1.3"
+scipy = "*"
+locan = "*"
+tifffile = "*"
+
+[feature.ml.dependencies]
+xgboost = "*"
+lightgbm = "*"
+
+[feature.gui.dependencies]
+napari = "*"
+pyqt = "*"
+
+[feature.dev.dependencies]
+pytest = "*"
+
+# `pixi install -e <env>` builds these. `light` mirrors the pip [light] extra so the
+# in-core backends (cluster/track/spatial_stats/counting/analyze/metrics/render/qc) run.
+[environments]
+default = { features = [] }
+light = { features = ["cluster", "track", "stats", "ml"] }
+gui = { features = ["gui"] }
+dev = { features = ["cluster", "track", "stats", "ml", "dev"] }

@@ -1,0 +1,35 @@
+/*
+ * Institutional config TEMPLATE for the labflow Nextflow pipeline (the nf-core pattern).
+ *
+ * Each site adds a small config for its cluster and the pipeline runs there unchanged.
+ * Copy to  conf/<your_lab>.config , edit, and run:
+ *
+ *     labflow pipeline --engine nextflow -c conf/<your_lab>.config
+ *     # or:  nextflow run workflow/main.nf -c workflow/nextflow.config -c conf/<your_lab>.config
+ *
+ * Nextflow layers -c files left to right (later wins), so this overrides nextflow.config.
+ * LabFlow already isolates each tool; this only chooses WHERE and HOW jobs run.
+ */
+
+params {
+    // site-specific scratch + data roots
+    // run_dir   = "/scratch/$USER/labflow_run"
+    // input_dir = "/data/microscopy/movies"
+}
+
+process {
+    // executor       = 'slurm'              // or: sge, lsf, pbs, awsbatch, k8s
+    // queue          = 'gpu'
+    // clusterOptions = '--gres=gpu:1'
+    // cpus           = 4
+    // memory         = '32 GB'
+    // time           = '4h'
+}
+
+// HPC container engine (no root). LabFlow's docker tools run as .sif via Apptainer.
+apptainer {
+    // enabled    = true
+    // autoMounts = true
+    // cacheDir   = "/scratch/$USER/apptainer_cache"
+}
+// or:  singularity { enabled = true }   /   docker { enabled = true }

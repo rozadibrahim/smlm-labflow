@@ -1,0 +1,61 @@
+{% set name = "smlm-labflow" %}
+{% set version = "0.3.0" %}
+
+# conda-forge recipe for the labflow CORE (the light, pure-Python orchestrator).
+# Lets a lab install with:  mamba install -c conda-forge smlm-labflow
+# Heavy tools stay isolated and are fetched on demand via `labflow install <tool>`.
+#
+# To publish: open a PR adding this recipe to conda-forge/staged-recipes, after a
+# tagged GitHub release; fill `sha256` from the release tarball. Once merged, a
+# BioContainer is auto-built too.
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://github.com/rozadibrahim/smlm-labflow/archive/refs/tags/v{{ version }}.tar.gz
+  sha256: 0000000000000000000000000000000000000000000000000000000000000000  # fill on release
+
+build:
+  noarch: python
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - labflow = labflow.cli:main
+
+requirements:
+  host:
+    - python >=3.11
+    - pip
+    - setuptools >=61
+  run:
+    - python >=3.11
+    - click >=8
+    - numpy
+    - pandas
+    - pyyaml
+    - matplotlib-base
+    - snakemake-minimal >=8,<9
+
+test:
+  imports:
+    - labflow
+    - driftcorr
+  commands:
+    - labflow --help
+    - labflow list
+
+about:
+  home: https://github.com/rozadibrahim/smlm-labflow
+  license: MIT
+  license_file: LICENSE
+  summary: Reproducible orchestration and benchmarking for single-molecule localization microscopy.
+  description: |
+    A registry-driven pipeline for SMLM: one CLI + Snakemake/Nextflow drive ~50 methods
+    across localize/drift/segment/track/cluster/spatial_stats/counting/analyze/metrics/
+    render stages, each isolated over a canonical-CSV file contract.
+
+extra:
+  recipe-maintainers:
+    - rozadibrahim

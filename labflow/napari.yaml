@@ -1,0 +1,12 @@
+name: smlm-labflow
+display_name: SMLM LabFlow
+# npe2 manifest: registers the GUI front door. Discovered via the
+# `napari.manifest` entry point in pyproject.toml.
+contributions:
+  commands:
+    - id: smlm-labflow.open_run
+      title: Open a LabFlow run
+      python_name: labflow._napari:open_run
+  widgets:
+    - command: smlm-labflow.open_run
+      display_name: Open LabFlow run
