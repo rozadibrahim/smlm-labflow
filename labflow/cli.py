@@ -104,10 +104,47 @@ class LabflowGroup(click.Group):
         return None
 
 
-@click.group(cls=LabflowGroup, context_settings={"help_option_names": ["-h", "--help"]})
+_HELP = """
+\b
+  #     ##  ###  #### #     ##  #   #
+  #    #  # #  # #    #    #  # #   #
+  #    #### ###  ###  #    #  # # # #
+  #    #  # #  # #    #    #  # ## ##
+  #### #  # ###  #    #### ##  #   #
+  single-molecule localization microscopy, orchestrated
+
+One registry (config/methods.yaml) drives the CLI and the Snakemake/Nextflow pipelines.
+Every method runs isolated over a canonical-CSV file contract across the stages:
+localize, drift, segment, track, cluster, spatial_stats, counting, analyze, metrics, render.
+"""
+
+_EPILOG = """
+First steps:
+\b
+  labflow demo                  run the whole in-core pipeline on synthetic data
+  labflow list                  every method, grouped by stage
+  labflow doctor                check your install + lint the registry
+  labflow conformance           prove which methods run on this machine
+  labflow run cluster -b dbscan -i locs.csv -o clusters.csv
+  labflow install cellpose      fetch an isolated heavy tool (then: run segment -b cellpose)
+  labflow pipeline --cores 4    the full DAG (Snakemake; or --engine nextflow)
+\b
+Install paths (lab users vs developers): docs/install.md
+"""
+
+
+@click.group(cls=LabflowGroup, help=_HELP, epilog=_EPILOG,
+             context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(package_name="smlm-labflow", prog_name="labflow")
 def cli():
-    """SMLM LabFlow - reproducible orchestration for localization microscopy."""
+    pass
+
+
+@cli.command("help")
+@click.pass_context
+def help_cmd(ctx):
+    """Show the logo, overview, and first steps (same as `labflow --help`)."""
+    click.echo(ctx.parent.get_help())
 
 
 @cli.command("list")

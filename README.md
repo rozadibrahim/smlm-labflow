@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="SMLM LabFlow" width="460">
+</p>
+
 # SMLM LabFlow
 
 A modular pipeline wrapper for **Single-Molecule Localization Microscopy (SMLM)** analysis.
