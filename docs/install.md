@@ -61,6 +61,21 @@ labflow pipeline --engine nextflow  -c conf/mylab.config   # HPC/cloud (see conf
 pytest labflow/tests driftcorr/tests  # the test suite
 ```
 
+### Make `labflow` callable from anywhere (no venv activation)
+
+`labflow` is a real entry point, but it lives in the project's env. To run it as plain
+`labflow` from any directory in bash:
+
+```bash
+bash scripts/install_cli.sh     # writes ~/.local/bin/labflow -> this repo's env
+                                # (add ~/.local/bin to PATH if it prints the one-liner)
+labflow help                    # now works from anywhere
+```
+
+Cross-platform alternative (isolated, on PATH automatically): `pipx install -e .`
+(or `pipx install smlm-labflow` once published). Or just activate the env:
+`source envs/labflow/Scripts/activate` (Windows) / `source envs/labflow/bin/activate`.
+
 - **Per-tool isolation / GPU / Apptainer:** [docs/environments.md](environments.md)
 - **Add a method (one YAML entry):** [docs/methods.md](methods.md)
 - **HPC / institutional configs:** [conf/README.md](../conf/README.md)
