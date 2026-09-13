@@ -1,0 +1,10 @@
+# Small, reproducible startup patch over the already-tested scientific image.
+# This intentionally retains its application/dependency snapshot at 64263d3.
+FROM ghcr.io/rozadibrahim/smlm-labflow@sha256:2e7c10345a0502b382171ac5ab66c2b39c2b59538185af9e2c0a795384fda044
+
+COPY --chmod=755 docker/runpod/start.sh /usr/local/bin/labflow-pod-start
+COPY docker/runpod/start.sh /opt/smlm-labflow/docker/runpod/start.sh
+RUN ln -s /usr/local/bin/labflow-pod-start /start.sh
+LABEL org.opencontainers.image.description="LabFlow startup compatibility candidate; scientific environment retained from 64263d3"
+ENTRYPOINT []
+CMD ["/start.sh"]

@@ -166,11 +166,14 @@ RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation -e . \
     && rm -rf /tmp/labflow-demo
 
 RUN install -m 755 docker/runpod/start.sh /usr/local/bin/labflow-pod-start \
+    && ln -s /usr/local/bin/labflow-pod-start /start.sh \
     && install -m 755 docker/runpod/liteloc.sh /usr/local/bin/labflow-liteloc \
     && install -m 644 docker/runpod/sshd_config /etc/ssh/sshd_config_labflow \
     && printf 'PATH=%s\nPYTHONPATH=/opt/smlm-labflow\nMPLBACKEND=Agg\nLABFLOW_LEGACY_PYTHON=%s\n' "$PATH" "$LABFLOW_LEGACY_PYTHON" > /etc/environment
 
 WORKDIR /workspace
 EXPOSE 22
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/labflow-pod-start"]
-CMD ["sshd"]
+# RunPod may inject a shell command. Keep CMD independently executable instead
+# of requiring arguments to pass through a custom init/entrypoint chain.
+ENTRYPOINT []
+CMD ["/start.sh"]

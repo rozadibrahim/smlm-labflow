@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Emit a marker before touching mounted storage so application startup failures
+# can be distinguished from OCI/sidecar failures that happen before this runs.
+echo 'LabFlow startup: entering /start.sh' >&2
+trap 'status=$?; printf "LabFlow startup failed at line %s (exit %s)\n" "$LINENO" "$status" >&2' ERR
+if [[ $# -eq 0 ]]; then
+    set -- sshd
+fi
+
 mkdir -p /workspace/{data,outputs,models,backends,envs}
 if [[ "${1:-}" != "sshd" ]]; then
     exec "$@"

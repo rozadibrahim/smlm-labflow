@@ -51,6 +51,27 @@ docker push ghcr.io/<owner>/smlm-labflow:runpod-feat
   RunPod has populated it from your account key, or paste the public key here.
 - Leave container entrypoint/start command unset so the image starts SSH.
 
+### Startup compatibility candidate
+
+The `docker/runpod/Dockerfile.startup` overlay preserves the published scientific
+environment at commit `64263d3` and changes only startup. It clears the custom
+ENTRYPOINT and provides a directly executable `/start.sh` as CMD. The full build
+uses the same startup convention. If the template overrides the start command,
+set it explicitly to `/start.sh` and leave the entrypoint unset.
+
+The **Test and publish RunPod startup candidate** workflow checks default startup,
+an injected `/bin/bash -c 'exec /start.sh'` command, SSH, the synthetic demo and
+storage/host-key persistence before publishing `:runpod-startup-fix` and a
+commit-specific `:runpod-startup-<sha>`. It does not update `:runpod-feat` or `:latest`.
+This small overlay avoids reinstalling the CUDA and scientific dependencies.
+
+The first application log is `LabFlow startup: entering /start.sh`; shell failures
+report a line number and exit status without logging commands or credentials.
+This candidate addresses startup-command compatibility and diagnostics. It is
+not a confirmed fix for RunPod's `error starting sidecar ... runc ... EOF` failure,
+which may occur before any image startup code runs. Real RunPod validation remains
+required even when the Docker integration tests pass.
+
 No private keys or credentials belong in the image. Host keys are generated on
 first boot and kept under `/workspace/.labflow-ssh` for that volume. Avoid sharing
 one volume's SSH host identity between independently exposed pods.
