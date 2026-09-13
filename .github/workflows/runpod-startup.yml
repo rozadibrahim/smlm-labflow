@@ -7,6 +7,7 @@ on:
       - '.github/workflows/runpod-startup.yml'
       - 'docker/runpod/Dockerfile.startup'
       - 'docker/runpod/start.sh'
+      - 'docker/runpod/sshd_config'
       - 'scripts/runpod_smoke_test.sh'
   workflow_dispatch:
 
@@ -36,7 +37,10 @@ jobs:
           load: true
           tags: ${{ steps.image.outputs.name }}
       - name: Verify default and injected startup commands, SSH, storage and demo
-        run: bash scripts/runpod_smoke_test.sh '${{ steps.image.outputs.name }}'
+        # Reproduce the known 0666 host-key failure with the previous image first.
+        run: >-
+          bash scripts/runpod_smoke_test.sh '${{ steps.image.outputs.name }}'
+          'ghcr.io/rozadibrahim/smlm-labflow@sha256:3ea96956c72656a2859977c958e1733340d54a78d4bc60b147316db420760748'
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io

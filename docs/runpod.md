@@ -61,7 +61,7 @@ set it explicitly to `/start.sh` and leave the entrypoint unset.
 
 The **Test and publish RunPod startup candidate** workflow checks default startup,
 an injected `/bin/bash -c 'exec /start.sh'` command, SSH, the synthetic demo and
-storage/host-key persistence before publishing `:runpod-startup-fix` and a
+storage persistence and correct host-key lifecycle before publishing `:runpod-startup-fix` and a
 commit-specific `:runpod-startup-<sha>`. It does not update `:runpod-feat` or `:latest`.
 This small overlay avoids reinstalling the CUDA and scientific dependencies.
 
@@ -72,9 +72,23 @@ not a confirmed fix for RunPod's `error starting sidecar ... runc ... EOF` failu
 which may occur before any image startup code runs. Real RunPod validation remains
 required even when the Docker integration tests pass.
 
-No private keys or credentials belong in the image. Host keys are generated on
-first boot and kept under `/workspace/.labflow-ssh` for that volume. Avoid sharing
-one volume's SSH host identity between independently exposed pods.
+No private keys or credentials are baked into the image. Host keys are generated
+on first boot under `/etc/ssh/labflow`, on the container's local filesystem. Some
+RunPod network volumes report files as mode `0666` even after `chmod 600`; OpenSSH
+refuses private keys on those volumes. Earlier images' `/workspace/.labflow-ssh`
+keys are ignored, not imported. Your public login key is still installed under
+`/root/.ssh`; the private login key stays on your own computer.
+
+An ordinary Docker restart preserves the container's host key. Replacing or
+resetting the container's local disk creates a new host identity, even when the
+same network volume is attached. If SSH reports a changed identity after a known
+replacement, verify its new fingerprint through RunPod's console before updating
+that host's known_hosts entry. Do not disable host-key verification globally.
+Scientific datasets and results remain under `/workspace`.
+
+Startup does not install packages or launch scientific jobs. A workspace-directory
+creation failure is reported without preventing SSH access for diagnosis. The
+SSH configuration and host key are checked before printing the readiness message.
 
 The template provides SSH/SFTP, rsync, tmux and SSH port forwarding. It does not
 start Jupyter or a desktop GUI. Review napari outputs on your local workstation.

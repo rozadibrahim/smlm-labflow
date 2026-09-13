@@ -4,7 +4,9 @@ FROM ghcr.io/rozadibrahim/smlm-labflow@sha256:2e7c10345a0502b382171ac5ab66c2b39c
 
 COPY --chmod=755 docker/runpod/start.sh /usr/local/bin/labflow-pod-start
 COPY docker/runpod/start.sh /opt/smlm-labflow/docker/runpod/start.sh
+COPY --chmod=644 docker/runpod/sshd_config /etc/ssh/sshd_config_labflow
+COPY docker/runpod/sshd_config /opt/smlm-labflow/docker/runpod/sshd_config
 RUN ln -s /usr/local/bin/labflow-pod-start /start.sh
-LABEL org.opencontainers.image.description="LabFlow startup compatibility candidate; scientific environment retained from 64263d3"
+LABEL org.opencontainers.image.description="LabFlow startup with local SSH host keys for network-volume compatibility; scientific environment retained from 64263d3"
 ENTRYPOINT []
 CMD ["/start.sh"]

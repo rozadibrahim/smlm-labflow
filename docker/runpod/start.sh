@@ -9,12 +9,14 @@ if [[ $# -eq 0 ]]; then
     set -- sshd
 fi
 
-mkdir -p /workspace/{data,outputs,models,backends,envs}
+if ! mkdir -p /workspace/{data,outputs,models,backends,envs}; then
+    echo 'Workspace directories could not be prepared; SSH remains available for diagnosis.' >&2
+fi
 if [[ "${1:-}" != "sshd" ]]; then
     exec "$@"
 fi
 
-install -d -m 700 /root/.ssh /workspace/.labflow-ssh
+install -d -m 700 /root/.ssh /etc/ssh/labflow
 install -d -m 755 /run/sshd
 if [[ -n "${PUBLIC_KEY:-}" ]]; then
     key_file=$(mktemp /root/.ssh/authorized_keys.XXXXXX)
@@ -28,12 +30,15 @@ elif [[ ! -s /root/.ssh/authorized_keys ]]; then
     echo 'No SSH public key configured. Set PUBLIC_KEY in the RunPod template.' >&2
 fi
 
-# Generate unique host keys at first boot and retain them with this volume.
-host_key=/workspace/.labflow-ssh/ssh_host_ed25519_key
+# Network volumes may report every file as 0666 even after chmod succeeds.
+# OpenSSH refuses those private keys. Keep server identity on the container's
+# local filesystem, and never import the old, potentially world-readable key.
+host_key=/etc/ssh/labflow/ssh_host_ed25519_key
 if [[ ! -f "$host_key" ]]; then
     ssh-keygen -q -t ed25519 -N '' -C '' -f "$host_key"
 fi
 chmod 600 "$host_key"
 unset PUBLIC_KEY
+/usr/sbin/sshd -t -f /etc/ssh/sshd_config_labflow
 echo 'LabFlow ready: labflow doctor | labflow conformance | labflow demo'
 exec /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config_labflow
