@@ -2,33 +2,17 @@
 
 A modular pipeline wrapper for **Single-Molecule Localization Microscopy (SMLM)** analysis.
 
-It handles the engineering overhead — QC, calibration, training, inference, export, benchmarking, and reporting — so you can focus on the science.
+Developed as part of a short M1 research internship, LabFlow brings together input QC, calibration, training, inference, export, benchmarking, and reporting.
 
-> **Status:** research prototype — development paused (13 September 2026)  
+> **Status:** work in progress  
 > **Current backend:** LiteLoc  
 > **Architecture:** backend-agnostic (DECODE, DeepSTORM, FD-DeepLoc adapters can be added)
 
 ---
 
-## Development checkpoint — 13 September 2026
-
-Active development is paused. The current code, environment files, configuration examples, and roadmap are preserved for future work. There is no scheduled date for resuming development.
-
-This checkpoint documents the existing software; it does not establish a newly tested or scientifically validated release. The features below describe the current implementation, with setup requirements and limitations noted in this README.
-
-### Resuming development
-
-1. Recreate the environment using the quick start below and install LiteLoc separately.
-2. Review `adapters/backend_paths.example.yml` and adapt `adapters/backend_paths.yml` to the local LiteLoc installation.
-3. Adapt a profile to the microscope, PSF, calibration data, and movie paths.
-4. Run a small representative calibration/training/inference workflow and inspect the QC, exported localizations, and reports.
-5. Record the backend revision, environment, dataset, configuration, and measured results before extending the pipeline. Revisit the deferred roadmap after this validation.
-
----
-
 ## What it does
 
-A typical SMLM run has many fragile manual steps. LabFlow wraps them into a single reproducible CLI:
+LabFlow provides a command-line interface for the SMLM workflow:
 
 ```
 calibrate → train → infer → QC → export → benchmark → report
@@ -211,8 +195,6 @@ python combine_benchmark_comparisons.py results -o comparison_summary_all_runs.c
 
 
 ## Roadmap
-
-Deferred while development is paused; these items have no delivery schedule.
 
 - Additional backend adapters (DECODE, DeepSTORM, FD-DeepLoc)
 - CRLB/RMSE reporting improvements
