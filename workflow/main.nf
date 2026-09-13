@@ -38,7 +38,7 @@ process CALIBRATE {
     script:
     """
     cd ${params.repo}
-    python run_pipeline.py calibrate -i "${params.calibrate_input}" -p "${params.profile}" \
+    "${params.legacy_python}" run_pipeline.py calibrate -i "${params.calibrate_input}" -p "${params.profile}" \
         -o "${params.run_dir}/calibrate" -b "${params.backend}" --overwrite
     """
 }
@@ -49,7 +49,7 @@ process TRAIN {
     script:
     """
     cd ${params.repo}
-    python run_pipeline.py train -i "${params.train_input}" -p "${params.profile}" \
+    "${params.legacy_python}" run_pipeline.py train -i "${params.train_input}" -p "${params.profile}" \
         -o "${params.run_dir}/train" -b "${params.backend}" --overwrite
     """
 }
@@ -63,7 +63,7 @@ process INFER {
     def res = "${params.run_dir}/infer/results"
     """
     cd ${params.repo}
-    python run_pipeline.py infer -i "${params.input_dir}" -p "${params.profile}" \
+    "${params.legacy_python}" run_pipeline.py infer -i "${params.input_dir}" -p "${params.profile}" \
         -o "${params.run_dir}/infer" -b "${params.backend}" --overwrite ${params.extra_infer_args}
     cp "${res}/batch_manifest.csv" batch_manifest.csv
     """

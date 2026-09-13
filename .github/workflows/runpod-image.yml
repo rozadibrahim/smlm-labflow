@@ -3,8 +3,6 @@ name: Build RunPod pipeline image
 on:
   push:
     branches: [feat/labflow-pipeline, 'codex/runpod-*']
-  pull_request:
-    paths: ['docker/**', '.dockerignore', 'requirements/**', 'pyproject.toml', '.github/workflows/runpod-image.yml']
   workflow_dispatch:
 
 permissions:
@@ -54,4 +52,8 @@ jobs:
           IMAGE: ${{ steps.image.outputs.name }}
         run: |
           docker push "$IMAGE"
+          candidate="${IMAGE%%:runpod-*}:runpod-feat"
+          docker tag "$IMAGE" "$candidate"
+          docker push "$candidate"
           echo "RunPod image: \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Development alias: \`$candidate\`" >> "$GITHUB_STEP_SUMMARY"

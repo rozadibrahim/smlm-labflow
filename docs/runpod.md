@@ -11,8 +11,10 @@ bash scripts/runpod_smoke_test.sh smlm-labflow:runpod
 The **Build RunPod pipeline image** GitHub Actions workflow builds, checks the
 scientific core, tests a real SSH login with a mounted volume, and only then
 publishes `ghcr.io/<owner>/smlm-labflow:runpod-<full-commit-sha>`. Copy the exact
-image reference from the successful workflow summary. It does not replace
-`:latest`. Private GHCR packages need registry credentials in RunPod.
+image reference from the successful workflow summary. The convenient `:runpod-feat`
+alias points at the most recently tested development build; use the commit tag
+or digest to reproduce a particular build. It does not replace `:latest`.
+Private GHCR packages need registry credentials in RunPod.
 
 ## Template settings
 
@@ -41,6 +43,10 @@ start Jupyter or a desktop GUI. Review napari outputs on your local workstation.
 The newer core does not upgrade LiteLoc's Torch or spline ABI. Do not assume the
 legacy CUDA stack supports a newer GPU architecture; validate on your target GPU
 before running experiments. The build and CI checks do not use a GPU.
+
+`LABFLOW_LEGACY_PYTHON` routes the Snakemake/Nextflow localization lifecycle to
+the legacy interpreter too. The baked Snakemake defaults read inputs and write
+results beneath `/workspace`; override the scientific settings with your profile.
 
 The image contains the LiteLoc **dependencies and LabFlow adapter**, not the
 external LiteLoc source, trained models, or microscope calibration. Install your

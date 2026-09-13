@@ -122,6 +122,12 @@ After editing the registry, run **`labflow doctor`** — it lints every entry
 (missing `entry`/`command`/`env`/`image`, unknown stage or runtime) so a malformed
 method fails fast with a clear message instead of crashing mid-run.
 
+For an adapter whose invocation is not implemented, `conformance: {skip: "reason"}`
+records an explicit SKIP in the synthetic smoke test. Use this only for unfinished
+integration code, not to suppress failures in runnable tools. For example, the
+unbound swift adapter must not run merely because a host has Apple's unrelated
+`swift` compiler installed.
+
 ## Worked examples already in the registry
 
 - `rcc`, `aim_julia`, `dme`, `none` — drift, `runtime: python` via `driftcorr`

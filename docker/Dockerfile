@@ -138,6 +138,7 @@ RUN conda create -y --override-channels -c conda-forge \
 ENV PATH=/opt/labflow-core/bin:/opt/conda/envs/smlm-labflow/bin:/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV PYTHONPATH=/opt/smlm-labflow
 ENV MPLBACKEND=Agg
+ENV LABFLOW_LEGACY_PYTHON=/opt/conda/envs/smlm-labflow/bin/python
 ENV CONDA_DEFAULT_ENV=""
 
 RUN python -m pip install --no-cache-dir -e '.[light]' \
@@ -152,7 +153,7 @@ RUN python -m pip install --no-cache-dir -e '.[light]' \
 RUN install -m 755 docker/runpod/start.sh /usr/local/bin/labflow-pod-start \
     && install -m 755 docker/runpod/liteloc.sh /usr/local/bin/labflow-liteloc \
     && install -m 644 docker/runpod/sshd_config /etc/ssh/sshd_config_labflow \
-    && printf 'PATH=%s\nPYTHONPATH=/opt/smlm-labflow\nMPLBACKEND=Agg\n' "$PATH" > /etc/environment
+    && printf 'PATH=%s\nPYTHONPATH=/opt/smlm-labflow\nMPLBACKEND=Agg\nLABFLOW_LEGACY_PYTHON=%s\n' "$PATH" "$LABFLOW_LEGACY_PYTHON" > /etc/environment
 
 WORKDIR /workspace
 EXPOSE 22

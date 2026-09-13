@@ -20,6 +20,7 @@ container=$(docker run -d -p 127.0.0.1::22 \
 port=$(docker port "$container" 22/tcp | cut -d: -f2)
 ssh_args=(-i "$scratch/key" -p "$port" -o BatchMode=yes -o IdentitiesOnly=yes
     -o ConnectTimeout=2 -o StrictHostKeyChecking=accept-new
+    -o HostKeyAlias=labflow-ci
     -o "UserKnownHostsFile=$scratch/known_hosts")
 ready=false
 for attempt in {1..30}; do
@@ -34,16 +35,23 @@ ssh "${ssh_args[@]}" root@127.0.0.1 \
     'labflow --help && python -c "import sys; assert sys.version_info[:2] == (3, 12)" && test -d /workspace/outputs'
 ssh "${ssh_args[@]}" root@127.0.0.1 \
     'labflow demo --out /workspace/outputs/smoke && touch /workspace/outputs/persistence-check'
+ssh "${ssh_args[@]}" root@127.0.0.1 \
+    'labflow pipeline -n --printshellcmds' > "$scratch/workflow-plan"
+grep -F '/opt/conda/envs/smlm-labflow/bin/python run_pipeline.py infer' "$scratch/workflow-plan"
+grep -F '/workspace/outputs/snakemake_run' "$scratch/workflow-plan"
 docker restart "$container" >/dev/null
+# Docker may reassign an ephemeral published port when the container restarts.
+port=$(docker port "$container" 22/tcp | cut -d: -f2)
+ssh_args[3]="$port"
 # Same known_hosts file proves that restarting preserves the host identity.
 ready=false
 for attempt in {1..30}; do
     if ssh "${ssh_args[@]}" root@127.0.0.1 \
-        'test -f /workspace/outputs/persistence-check' 2>/dev/null; then
+        'test -f /workspace/outputs/persistence-check' 2>"$scratch/restart-error"; then
         ready=true
         break
     fi
     sleep 1
 done
-[[ "$ready" == true ]] || { echo 'Restart/persistence check failed' >&2; exit 1; }
+[[ "$ready" == true ]] || { cat "$scratch/restart-error" >&2; echo 'Restart/persistence check failed' >&2; exit 1; }
 docker run --rm "$image" labflow-liteloc --help

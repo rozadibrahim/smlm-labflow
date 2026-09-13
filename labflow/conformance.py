@@ -170,6 +170,10 @@ def run_conformance(stage: Optional[str] = None, reg=None) -> List[Result]:
                 s = dict(spec)
                 s["name"] = name
                 rt = str(s.get("runtime", "python"))
+                skip_reason = (s.get("conformance") or {}).get("skip")
+                if skip_reason:
+                    results.append(Result(name, st, rt, "SKIP", str(skip_reason)))
+                    continue
                 if name in unrunnable:
                     results.append(Result(name, st, rt, "SKIP", unrunnable[name]))
                     continue

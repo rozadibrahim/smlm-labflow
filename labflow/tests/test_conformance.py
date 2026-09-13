@@ -43,6 +43,17 @@ def test_core_tools_pass_conformance():
     assert not failures, "core conformance failures:\n  " + "\n  ".join(failures)
 
 
+def test_scaffold_skip_does_not_execute_external_command():
+    reg = {"stages": ["test"], "methods": {"unfinished": {
+        "stage": "test", "runtime": "local", "status": "planned",
+        "command": ["python", "-c", "raise RuntimeError('must not execute')"],
+        "conformance": {"skip": "Adapter invocation is not implemented"},
+    }}}
+    result, = run_conformance(reg=reg)
+    assert result.status == "SKIP"
+    assert result.detail == "Adapter invocation is not implemented"
+
+
 if __name__ == "__main__":
     test_core_tools_pass_conformance()
     print("conformance gate passed")

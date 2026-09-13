@@ -257,6 +257,7 @@ methods:
     params: {}
     status: planned
     install: {requires_cmd: swift}    # external binary; request from the authors
+    conformance: {skip: "swift adapter invocation is not implemented; a same-named compiler is not the microscopy tracker"}
     description: "swift multi-state single-particle tracking (Heilemann lab). Needs the swift binary on PATH (request from authors)."
 
   # === cluster: localizations -> nanoclusters ================================

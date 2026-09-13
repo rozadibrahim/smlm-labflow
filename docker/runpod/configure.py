@@ -16,6 +16,12 @@ paths = yaml.safe_load((root / "adapters/backend_paths.example.yml").read_text()
 paths["liteloc"]["root"] = "/workspace/backends/LiteLoc"
 (root / "adapters/backend_paths.yml").write_text(yaml.safe_dump(paths, sort_keys=False))
 
+config_path = root / "config/config.yaml"
+config = yaml.safe_load(config_path.read_text())
+config.update(input_dir="/workspace/data/movies", run_dir="/workspace/outputs/snakemake_run",
+              calibrate_input="/workspace/data/beads", train_input="/workspace/data/train")
+config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+
 # Per-tool installations persist on the attached volume. The baked core does
 # not depend on that volume and is available immediately.
 envs = root / "envs"
