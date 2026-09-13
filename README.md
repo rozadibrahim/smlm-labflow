@@ -4,9 +4,25 @@ A modular pipeline wrapper for **Single-Molecule Localization Microscopy (SMLM)*
 
 It handles the engineering overhead — QC, calibration, training, inference, export, benchmarking, and reporting — so you can focus on the science.
 
-> **Status:** ready for lab use — actively developed  
+> **Status:** research prototype — development paused (13 September 2026)  
 > **Current backend:** LiteLoc  
 > **Architecture:** backend-agnostic (DECODE, DeepSTORM, FD-DeepLoc adapters can be added)
+
+---
+
+## Development checkpoint — 13 September 2026
+
+Active development is paused. The current code, environment files, configuration examples, and roadmap are preserved for future work. There is no scheduled date for resuming development.
+
+This checkpoint documents the existing software; it does not establish a newly tested or scientifically validated release. The features below describe the current implementation, with setup requirements and limitations noted in this README.
+
+### Resuming development
+
+1. Recreate the environment using the quick start below and install LiteLoc separately.
+2. Review `adapters/backend_paths.example.yml` and adapt `adapters/backend_paths.yml` to the local LiteLoc installation.
+3. Adapt a profile to the microscope, PSF, calibration data, and movie paths.
+4. Run a small representative calibration/training/inference workflow and inspect the QC, exported localizations, and reports.
+5. Record the backend revision, environment, dataset, configuration, and measured results before extending the pipeline. Revisit the deferred roadmap after this validation.
 
 ---
 
@@ -31,7 +47,7 @@ conda activate liteloc_env
 
 ### 2. Configure your machine
 
-Edit `adapters/backend_paths.yml` to point at your local LiteLoc install:
+Install LiteLoc separately. Use `adapters/backend_paths.example.yml` as a template and edit `adapters/backend_paths.yml` to point at your local installation:
 
 ```yaml
 liteloc:
@@ -103,7 +119,7 @@ smlm-labflow/
 ├── napari_locan_review.py       # Manual review helper
 │
 ├── adapters/
-│   ├── backend_paths.yml        # ⚠ Machine-specific — not committed
+│   ├── backend_paths.yml        # Machine-specific — adapt locally
 │   ├── backend_paths.example.yml
 │   ├── resolver.py              # Merges profile + paths + registry
 │   └── liteloc_adapter.py      # LiteLoc calibrate/train/infer
@@ -195,6 +211,8 @@ python combine_benchmark_comparisons.py results -o comparison_summary_all_runs.c
 
 
 ## Roadmap
+
+Deferred while development is paused; these items have no delivery schedule.
 
 - Additional backend adapters (DECODE, DeepSTORM, FD-DeepLoc)
 - CRLB/RMSE reporting improvements
