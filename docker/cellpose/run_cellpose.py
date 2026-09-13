@@ -3,7 +3,7 @@
 Cellpose segmentation runner — runs INSIDE the smlm-labflow/cellpose image,
 invoked by labflow's `runtime: docker` method over the file contract.
 
-Contract: image in (TIFF) -> mask label image out (uint16 TIFF), the labflow
+Contract: image in (TIFF) -> mask label image out (uint32 TIFF), the labflow
 `segment` stage output. Pinned to the Cellpose 3.x API; if you change the
 Cellpose version, verify the `models.CellposeModel(...).eval(...)` call.
 """
@@ -25,11 +25,11 @@ def main() -> None:
     p = json.loads(args.params)
 
     img = tifffile.imread(args.inp)
-    model = models.CellposeModel(gpu=False, model_type=p.get("model_type", "cyto3"))
+    model = models.CellposeModel(gpu=bool(p.get("gpu", False)), model_type=p.get("model_type", "cyto3"))
     diameter = p.get("diameter", 0) or None     # 0/None -> auto-estimate
     masks, _flows, _styles = model.eval(img, diameter=diameter)
 
-    tifffile.imwrite(args.out, masks.astype(np.uint16))
+    tifffile.imwrite(args.out, masks.astype(np.uint32))
     print(f"cellpose: segmented {int(masks.max())} objects -> {args.out}")
 
 

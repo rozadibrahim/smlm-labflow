@@ -20,6 +20,7 @@
 
 import csv
 import json
+import os
 from pathlib import Path
 
 
@@ -64,6 +65,7 @@ DO_PHENOTYPE = bool(config.get("phenotype", False))
 DO_ANALYZE = bool(config.get("analyze", False))
 
 LABFLOW = "python -m labflow"
+LEGACY_PYTHON = os.environ.get("LABFLOW_LEGACY_PYTHON", "python")
 
 
 def param_args(stage):
@@ -130,7 +132,7 @@ rule calibrate:
         run=f"{RUN_S}/calibrate",
         backend=BACKEND,
     shell:
-        'python run_pipeline.py calibrate -i "{params.indir}" -p "{params.profile}" '
+        '{LEGACY_PYTHON:q} run_pipeline.py calibrate -i "{params.indir}" -p "{params.profile}" '
         '-o "{params.run}" -b "{params.backend}" --overwrite'
 
 
@@ -145,7 +147,7 @@ rule train:
         run=f"{RUN_S}/train",
         backend=BACKEND,
     shell:
-        'python run_pipeline.py train -i "{params.indir}" -p "{params.profile}" '
+        '{LEGACY_PYTHON:q} run_pipeline.py train -i "{params.indir}" -p "{params.profile}" '
         '-o "{params.run}" -b "{params.backend}" --overwrite'
 
 
@@ -162,7 +164,7 @@ checkpoint infer:
         backend=BACKEND,
         extra=config.get("extra_infer_args", ""),
     shell:
-        'python run_pipeline.py infer -i "{params.indir}" -p "{params.profile}" '
+        '{LEGACY_PYTHON:q} run_pipeline.py infer -i "{params.indir}" -p "{params.profile}" '
         '-o "{params.run}" -b "{params.backend}" --overwrite {params.extra}'
 
 

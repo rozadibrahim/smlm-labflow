@@ -29,6 +29,9 @@ methods:
 
   # === localize: raw movies -> canonical localizations =======================
   liteloc:
+    python_env: LABFLOW_LEGACY_PYTHON
+    env: liteloc
+    install: {script: scripts/install_liteloc.py}
     stage: localize
     runtime: external
     command: ["python", "{repo}/run_pipeline.py", "infer",
@@ -51,6 +54,7 @@ methods:
     install: {conda_file: config/envs/decode.yml}   # `labflow install decode` builds the env
     description: "DECODE DL localizer (Speiser/Turaga 2021). Own conda env; needs a trained model + DECODE param file."
   fd_deeploc:
+    implementation: stub
     stage: localize
     runtime: conda
     env: fd_deeploc
@@ -67,6 +71,7 @@ methods:
       git: "https://github.com/Li-Lab-SUSTech/FD-DeepLoc"   # + clones the tool
     description: "FD-DeepLoc field-dependent DL localizer (Fu 2023). Own conda env + cloned repo; train/infer lifecycle."
   deepstorm3d:
+    implementation: stub
     stage: localize
     runtime: conda
     env: deepstorm3d
@@ -147,59 +152,64 @@ methods:
   # === segment: reference/SR image -> cell/ROI masks =========================
   cellpose:
     stage: segment
-    runtime: docker
-    image: ghcr.io/rozadibrahim/smlm-cellpose:latest   # prebuilt, published by CI
-    command: ["python", "/opt/cellpose/run_cellpose.py",
+    runtime: venv
+    env: cellpose
+    command: ["python", "{repo}/docker/cellpose/run_cellpose.py",
               "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
     input: image.tif
     output: masks.tif
     gui: ["cellpose"]                  # native Cellpose GUI (labelling/correction)
-    params: {diameter: 0, model_type: cyto3}
+    params: {diameter: 0, model_type: cyto3, gpu: true}
     status: planned
-    install: {pull: true, context: docker/cellpose}   # `labflow install cellpose` pulls;
-    description: "Cellpose segmentation (prebuilt image; --build to build locally)."
+    install: {requirements: requirements/cellpose.txt, probe: [cellpose.models, tifffile, torch]}
+    description: "cellpose: isolated native environment; installs without a Docker daemon."
+    environment: {CELLPOSE_LOCAL_MODELS_PATH: "{models}/cellpose", OMP_NUM_THREADS: "4"}
   stardist:
     stage: segment
-    runtime: docker
-    image: ghcr.io/rozadibrahim/smlm-stardist:latest   # prebuilt, published by CI
-    command: ["python", "/opt/stardist/run_stardist.py",
+    runtime: venv
+    env: stardist
+    command: ["python", "{repo}/docker/stardist/run_stardist.py",
               "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
     input: image.tif
     output: masks.tif
     gui: napari                        # StarDist also runs as a napari plugin
     params: {model: 2D_versatile_fluo}
     status: planned
-    install: {pull: true, context: docker/stardist}
-    description: "StarDist star-convex nucleus/ROI segmentation (Schmidt 2018). Prebuilt image; --build to build locally."
+    install: {requirements: requirements/stardist.txt, probe: [stardist.models, tifffile, tensorflow]}
+    description: "stardist: isolated native environment; installs without a Docker daemon."
+    environment: {KERAS_HOME: "{models}/keras", TF_NUM_INTRAOP_THREADS: "4", TF_NUM_INTEROP_THREADS: "2", OMP_NUM_THREADS: "4"}
   microsam:
     stage: segment
-    runtime: docker
-    image: ghcr.io/rozadibrahim/smlm-microsam:latest   # prebuilt, published by CI
-    command: ["python", "/opt/microsam/run_microsam.py",
+    runtime: venv
+    env: microsam
+    command: ["python", "{repo}/docker/microsam/run_microsam.py",
               "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
     input: image.tif
     output: masks.tif
     gui: napari                        # micro-SAM has a napari annotation plugin
     params: {model: vit_b_lm}          # ViT-B fine-tuned for light microscopy
     status: planned
-    install: {pull: true, context: docker/microsam}
-    description: "micro-SAM: Segment Anything for microscopy (Archit 2024), automatic instance segmentation. Prebuilt image."
+    install: {requirements: requirements/microsam.txt, probe: [micro_sam.automatic_segmentation, torch]}
+    description: "microsam: isolated native environment; installs without a Docker daemon."
+    environment: {QT_QPA_PLATFORM: offscreen, OMP_NUM_THREADS: "4", XDG_CACHE_HOME: "{models}/cache"}
   omnipose:
     stage: segment
-    runtime: docker
-    image: ghcr.io/rozadibrahim/smlm-omnipose:latest   # prebuilt, published by CI
-    command: ["python", "/opt/omnipose/run_omnipose.py",
+    runtime: venv
+    env: omnipose
+    command: ["python", "{repo}/docker/omnipose/run_omnipose.py",
               "--in", "{input}", "--out", "{output}", "--params", "{params_json}"]
     input: image.tif
     output: masks.tif
     gui: napari
     params: {model_type: bact_phase_omni}
     status: planned
-    install: {pull: true, context: docker/omnipose}
-    description: "Omnipose segmentation for elongated/bacterial cells (Cutler 2022). Prebuilt image; --build to build locally."
+    install: {requirements: requirements/omnipose.txt, probe: [cellpose_omni.models, omnipose, tifffile, torch]}
+    description: "omnipose: isolated native environment; installs without a Docker daemon."
 
   # === track: localizations -> trajectories ==================================
+    environment: {CELLPOSE_LOCAL_MODELS_PATH: "{models}/omnipose", QT_QPA_PLATFORM: offscreen, OMP_NUM_THREADS: "4", XDG_CACHE_HOME: "{models}/cache"}
   magik:
+    implementation: stub
     stage: track
     runtime: docker
     image: ghcr.io/rozadibrahim/smlm-magik:latest   # prebuilt, published by CI
@@ -213,6 +223,7 @@ methods:
     install: {pull: true, context: docker/magik}
     description: "MAGIK GNN tracking (DeepTrackAI 2023). GPU; pulls prebuilt image."
   trackmate:
+    implementation: stub
     stage: track
     runtime: docker
     image: ghcr.io/rozadibrahim/smlm-trackmate:latest   # prebuilt Fiji image, published by CI
@@ -226,6 +237,7 @@ methods:
     install: {pull: true, context: docker/trackmate}
     description: "TrackMate tracking via headless Fiji (Tinevez 2017 / Ershov 2022). Prebuilt image; links pre-detected localizations (binding point)."
   spot_on:
+    implementation: stub
     stage: track
     runtime: venv
     env: spot_on
@@ -248,6 +260,7 @@ methods:
     install: {extra: track, probe: trackpy}
     description: "trackpy linking (Crocker-Grier). In-process; `labflow install trackpy`."
   swift:
+    implementation: stub
     stage: track
     runtime: local
     command: ["python", "{repo}/adapters/swift_track.py",
@@ -257,6 +270,7 @@ methods:
     params: {}
     status: planned
     install: {requires_cmd: swift}    # external binary; request from the authors
+    conformance: {skip: "swift adapter invocation is not implemented; a same-named compiler is not the microscopy tracker"}
     description: "swift multi-state single-particle tracking (Heilemann lab). Needs the swift binary on PATH (request from authors)."
 
   # === cluster: localizations -> nanoclusters ================================
@@ -301,6 +315,7 @@ methods:
     install: {extra: stats, probe: locan}
     description: "DBSCAN/HDBSCAN via locan, with rich per-cluster properties (locan 0.21)."
   miro:
+    implementation: stub
     stage: cluster
     runtime: venv
     env: "envs/miro"
@@ -322,6 +337,7 @@ methods:
     install: {extra: stats, probe: scipy}
     description: "Voronoi-tessellation clustering (SR-Tesseler, Levet 2015). Pure numpy/scipy."
   caml:
+    implementation: stub
     stage: cluster
     runtime: venv
     env: caml
@@ -335,6 +351,7 @@ methods:
     install: {pip: ["scikit-learn", "tensorflow", "pandas", "numpy"]}
     description: "CAML: ML cluster analysis (Williamson 2020). DL; own env + CAML source/model (binding point)."
   bayesian:
+    implementation: stub
     stage: cluster
     runtime: venv
     env: bayesian_cluster
@@ -440,6 +457,7 @@ methods:
     status: ready
     description: "Blink-based molecular counting / PALM stoichiometry (count blink episodes per cluster). In-core."
   ibfcs:
+    implementation: stub
     stage: counting
     runtime: python
     entry: "labflow.stages.counting:run"
@@ -451,6 +469,7 @@ methods:
 
   # === phenotype: clusters/cells -> classification ===========================
   clusternet:
+    implementation: stub
     stage: phenotype
     runtime: venv
     env: clusternet
@@ -475,6 +494,7 @@ methods:
     status: ready
     description: "Per-track MSD diffusion analysis: D, anomalous exponent alpha, length, Rg. Pure numpy."
   deeptrace:
+    implementation: stub
     stage: analyze
     runtime: docker
     image: ghcr.io/rozadibrahim/smlm-deeptrace:latest   # prebuilt, published by CI
@@ -488,6 +508,7 @@ methods:
     install: {pull: true, context: docker/deeptrace}
     description: "DeepTRACE DL track analysis (2026). Prebuilt image (binding point)."
   vbspt:
+    implementation: stub
     stage: analyze
     runtime: venv
     env: vbspt
@@ -500,6 +521,7 @@ methods:
     install: {pip: ["numpy", "scipy", "pandas"]}
     description: "vbSPT variational-Bayes HMM diffusive states (Persson 2013). Own env (binding point)."
   andi:
+    implementation: stub
     stage: analyze
     runtime: venv
     env: andi
@@ -512,6 +534,7 @@ methods:
     install: {pip: ["andi-datasets", "numpy", "pandas"]}
     description: "AnDi anomalous-diffusion exponent/model DL inference (Munoz-Gil 2021/2024). Own env (binding point)."
   deepspt:
+    implementation: stub
     stage: analyze
     runtime: docker
     image: ghcr.io/rozadibrahim/smlm-deepspt:latest   # prebuilt, published by CI

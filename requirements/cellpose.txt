@@ -1,0 +1,8 @@
+# Cellpose 3 API, isolated from LiteLoc and the analysis core.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.7.1+cu128
+cellpose==3.1.1.2
+numpy==1.26.4
+opencv-python-headless==4.11.0.86
+tifffile==2025.5.10
+packaging

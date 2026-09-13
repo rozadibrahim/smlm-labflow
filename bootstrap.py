@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-ENV = ROOT / "envs" / "labflow"
+ENV = Path(os.environ.get("LABFLOW_ENV_ROOT", str(ROOT / "envs"))).resolve() / "labflow"
 MIN_PY = (3, 11)
 
 
@@ -77,6 +77,7 @@ def main() -> int:
         print(f"  get a {MIN_PY[0]}.{MIN_PY[1]} interpreter and pass it, e.g.:")
         print(f"    uv venv --python {MIN_PY[0]}.{MIN_PY[1]} envs/labflow   # or conda/pyenv")
         print(f"    python bootstrap.py --python <that python>")
+        return 2
 
     cmds: list = []
     if args.no_venv:

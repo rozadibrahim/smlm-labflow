@@ -92,6 +92,14 @@ def write(output_path, *, spec: Dict[str, Any], params: Dict[str, Any],
                         "engine": engine, "gpu": bool(spec.get("gpu"))}
     elif runtime in ("venv", "conda"):
         rec["env"] = spec.get("env")
+        if runtime == "venv":
+            from .install import _envdir, _venv_python
+            envdir = _envdir(spec["env"])
+            rec["environment_install"] = {
+                "python": str(_venv_python(envdir)),
+                "receipt_sha256": _sha256(envdir / ".labflow-install.json"),
+                "package_lock_sha256": _sha256(envdir / ".labflow-freeze.txt"),
+            }
 
     mp = manifest_path(out)
     mp.write_text(json.dumps(rec, indent=2), encoding="utf-8")

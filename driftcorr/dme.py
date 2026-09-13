@@ -39,8 +39,12 @@ def estimate_drift_dme(
         ) from exc
 
     params = dict(params or {})
-    if not pixel_size_nm:
-        raise ValueError("DME requires --pixel-size (positions are computed in pixels).")
+    if pixel_size_nm is None or not np.isfinite(pixel_size_nm) or pixel_size_nm <= 0:
+        raise ValueError("DME requires a positive --pixel-size (positions are computed in pixels).")
+    if units not in ("nm", "pixel"):
+        raise ValueError("DME units must be 'nm' or 'pixel'.")
+    if locs.empty:
+        raise ValueError("DME requires at least one localization.")
 
     x = locs["x"].to_numpy(float)
     y = locs["y"].to_numpy(float)
@@ -54,7 +58,7 @@ def estimate_drift_dme(
 
     has_z = "z" in locs.columns and np.isfinite(locs["z"].to_numpy(float)).any()
     if has_z:
-        pz = locs["z"].to_numpy(float) / pixel_size_nm
+        pz = locs["z"].to_numpy(float) / (pixel_size_nm if units == "nm" else 1.0)
         positions = np.stack([px, py, pz], axis=1)
     else:
         positions = np.stack([px, py], axis=1)
@@ -63,16 +67,17 @@ def estimate_drift_dme(
     n_frames = int(framenum.max()) + 1
     ndim = positions.shape[1]
 
-    # CRLB (localization precision squared, in px^2) is used as per-spot weight.
+    # Upstream takes standard deviations in pixels, NOT variances. Its native
+    # kernel squares these values internally (ComputeKLDivergence).
     default_prec_px = float(params.get("default_precision_px", 0.2))
     if "lpx" in locs.columns:
         prec = np.nan_to_num(
-            locs["lpx"].to_numpy(float) / pixel_size_nm, nan=default_prec_px
+            locs["lpx"].to_numpy(float) / (pixel_size_nm if units == "nm" else 1.0), nan=default_prec_px
         )
         prec = np.where(prec > 0, prec, default_prec_px)
     else:
         prec = np.full(positions.shape[0], default_prec_px)
-    crlb = np.tile((prec ** 2)[:, None], (1, ndim))
+    crlb = np.tile(prec[:, None], (1, ndim))
 
     fov = int(np.ceil(max(px.max(), py.max()))) + 1
     coarse_sigma = params.get("coarse_sigma", [0.2] * ndim)
@@ -87,6 +92,7 @@ def estimate_drift_dme(
         coarseSigma=coarse_sigma,
         useCuda=bool(params.get("use_cuda", False)),
         useDebugLibrary=False,
+        display=False,
     )
 
     estimated_drift = np.asarray(estimated_drift, dtype=float)  # (n_frames, ndim), px

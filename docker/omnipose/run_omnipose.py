@@ -3,7 +3,7 @@
 Omnipose segmentation runner -- runs INSIDE the smlm-labflow/omnipose image,
 invoked by labflow's `runtime: docker` segment method over the file contract.
 
-Contract: image in (TIFF) -> uint16 label mask out (TIFF). Omnipose (Cutler et al.
+Contract: image in (TIFF) -> uint32 label mask out (TIFF). Omnipose (Cutler et al.
 2022) targets elongated / bacterial cells and ships a patched cellpose
 (`cellpose_omni`); its eval signature has shifted across versions, so the call is
 guarded -- on a mismatch it fails with an actionable message rather than wrong masks.
@@ -31,7 +31,7 @@ def main() -> None:
             from cellpose_omni import models           # omnipose's patched fork
         except ImportError:
             from cellpose import models                 # older / combined layout
-        model = models.CellposeModel(gpu=False, model_type=model_type)
+        model = models.CellposeModel(gpu=bool(p.get("gpu", False)), model_type=model_type)
         result = model.eval(img, channels=p.get("channels", [0, 0]), omni=True)
         masks = result[0]
     except (ImportError, AttributeError, TypeError) as exc:
@@ -39,7 +39,7 @@ def main() -> None:
             "omnipose API mismatch: " + repr(exc) +
             "\nAdjust docker/omnipose/run_omnipose.py to your installed omnipose version.")
 
-    tifffile.imwrite(args.out, np.asarray(masks).astype(np.uint16))
+    tifffile.imwrite(args.out, np.asarray(masks).astype(np.uint32))
     print(f"omnipose: segmented {int(np.asarray(masks).max())} objects -> {args.out}")
 
 

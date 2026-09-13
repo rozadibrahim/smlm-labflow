@@ -1,0 +1,28 @@
+# Lightweight option for an existing RunPod PyTorch pod.
+# From the repository root:
+#   conda env create -f env_yamls/labflow_core_linux.yml
+#   conda run -n labflow-core python -m pip install --no-deps -e .
+# Keep LiteLoc and other conflicting GPU tools in separate environments.
+name: labflow-core
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - setuptools
+      - wheel
+      - click>=8
+      - numpy
+      - pandas
+      - pyyaml
+      - matplotlib
+      - snakemake>=8,<9
+      - scikit-learn>=1.3
+      - trackpy
+      - scipy
+      - locan
+      - xgboost
+      - lightgbm
+      - tifffile

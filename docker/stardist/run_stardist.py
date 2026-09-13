@@ -3,7 +3,7 @@
 StarDist segmentation runner -- runs INSIDE the smlm-labflow/stardist image,
 invoked by labflow's `runtime: docker` segment method over the file contract.
 
-Contract: image in (TIFF) -> uint16 label mask out (TIFF), the labflow `segment`
+Contract: image in (TIFF) -> uint32 label mask out (TIFF), the labflow `segment`
 stage output. Pinned to the stable StarDist2D.predict_instances API (Schmidt 2018).
 """
 
@@ -29,7 +29,7 @@ def main() -> None:
     model = StarDist2D.from_pretrained(p.get("model", "2D_versatile_fluo"))
     labels, _ = model.predict_instances(normalize(img))
 
-    tifffile.imwrite(args.out, labels.astype(np.uint16))
+    tifffile.imwrite(args.out, labels.astype(np.uint32))
     print(f"stardist: segmented {int(labels.max())} objects -> {args.out}")
 
 

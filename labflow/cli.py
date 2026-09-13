@@ -188,7 +188,10 @@ def run_cmd(stage, method, input_path, output_path, pixel_size, units, param, gu
 def install_cmd(tool, dry_run, force, build):
     """Install a tool's isolated env / container (pull prebuilt; automatic)."""
     from .install import install_tool
-    install_tool(tool, dry_run=dry_run, force=force, build=build)
+    try:
+        install_tool(tool, dry_run=dry_run, force=force, build=build)
+    except (RuntimeError, ValueError, KeyError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command("installed")
@@ -205,7 +208,11 @@ def installed_cmd():
             s = dict(spec); s["name"] = name
             rt = str(s.get("runtime", "python"))
             planned = str(s.get("status", "ready")).lower() != "ready"
-            if rt in IN_CORE and not (s.get("install") or {}).get("extra"):
+            if s.get("implementation") == "stub":
+                mark = "adapter not implemented"
+            elif s.get("python_env"):
+                mark = "external environment available" if is_installed(s) else f"-> labflow install {name}"
+            elif rt in IN_CORE and not (s.get("install") or {}).get("extra"):
                 if not is_installed(s):
                     mark = "planned (not implemented)"
                 else:
@@ -277,14 +284,21 @@ def demo_cmd(outdir: str):
 
 @cli.command("conformance")
 @click.option("--stage", default=None, help="Only test methods of this stage.")
-def conformance_cmd(stage: Optional[str]):
+@click.option("--output-dir", type=click.Path(file_okay=False), help="Keep fixtures, outputs, provenance and a JSON report.")
+@click.option("--require", multiple=True, help="Require this method to PASS; SKIP fails acceptance. Repeatable.")
+def conformance_cmd(stage: Optional[str], output_dir, require):
     """Smoke-test every installed method end-to-end over a synthetic fixture.
 
     Reports PASS / FAIL / SKIP per tool so a lab can confirm what actually runs on
     this machine. Exits non-zero if an installed, ready tool fails (a CI gate).
     """
-    from .conformance import print_report, run_conformance
-    raise SystemExit(1 if print_report(run_conformance(stage)) else 0)
+    from .conformance import print_report, run_conformance, required_failures
+    results = run_conformance(stage, output_dir=output_dir)
+    failures = print_report(results)
+    missing = required_failures(results, require)
+    if missing:
+        click.echo("Required methods did not pass: " + ", ".join(missing))
+    raise SystemExit(1 if failures or missing else 0)
 
 
 @cli.command("review")

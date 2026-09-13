@@ -1,0 +1,62 @@
+name: Build RunPod pipeline image
+
+on:
+  push:
+    branches: [feat/labflow-pipeline, 'codex/runpod-*']
+    # Opt into a heavyweight build by updating this small request file. Ordinary
+    # source pushes keep using the fast test workflow.
+    paths: ['docker/runpod/build-request.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runpod-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}:runpod-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: Build and run the in-image validation gates
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: runpod
+          platforms: linux/amd64
+          load: true
+          tags: ${{ steps.image.outputs.name }}
+          cache-from: type=gha,scope=runpod
+          cache-to: type=gha,mode=max,scope=runpod
+      - name: Test mounted storage and real SSH login
+        run: bash scripts/runpod_smoke_test.sh '${{ steps.image.outputs.name }}'
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the tested image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          docker push "$IMAGE"
+          candidate="${IMAGE%%:runpod-*}:runpod-feat"
+          docker tag "$IMAGE" "$candidate"
+          docker push "$candidate"
+          echo "RunPod image: \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Development alias: \`$candidate\`" >> "$GITHUB_STEP_SUMMARY"
