@@ -52,11 +52,13 @@ labflow doctor                      # confirms: isolated env, engine, tool place
 python bootstrap.py --lock          # commit requirements/core.linux.lock.txt for the lab
 ```
 
-`docker/Dockerfile` (pytorch 2.2.2 / cuda 12.1 + the SMLM stack) is the heavy
-image and a ready **pod base**: build/push it and select it as the RunPod template,
-then bootstrap labflow core on top. Note: a standard pod often can't run *nested*
-Docker, so per-tool isolation there is venv/conda, not the per-tool images (those
-are for workstations / HPC-with-docker / Apptainer).
+For a prebuilt interactive pod, use the `runpod` target in `docker/Dockerfile`:
+it includes the Python 3.12 light core, the separate Python 3.9 LiteLoc dependency
+stack, SSH and volume-safe application paths. See [RunPod setup](runpod.md) for
+the tested image tag, template settings and backend limitations. The `liteloc`
+target retains the earlier batch image. A standard pod often can't run *nested*
+Docker, so additional heavy tools need a supported venv/conda setup or a separate
+execution host; registering a Docker method does not make it runnable in a pod.
 
 ## 2. `labflow install <tool>` — pull prebuilt, isolated, reproducible
 

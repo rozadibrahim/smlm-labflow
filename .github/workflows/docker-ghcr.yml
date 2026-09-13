@@ -45,6 +45,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
+          target: liteloc
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:latest
