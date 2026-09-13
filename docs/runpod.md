@@ -3,6 +3,21 @@
 Build the `runpod` target from the `feat/labflow-pipeline` branch (or its image
 update branch). The `liteloc` target preserves the previous batch image.
 
+For the fastest start on an existing PyTorch pod, use the Conda recipe instead
+of rebuilding CUDA layers:
+
+```bash
+conda env create -f env_yamls/labflow_core_linux.yml
+conda run -n labflow-core python -m pip install --no-deps -e .
+conda run -n labflow-core labflow doctor
+conda run -n labflow-core labflow conformance
+```
+
+This supplies the analysis core, not LiteLoc or other tools' conflicting GPU
+dependencies. For a reusable pod with SSH and the legacy dependency environment,
+build the Docker target below. Dependency layers precede source copies, so code
+edits reuse the expensive environments.
+
 ```bash
 docker build --target runpod -f docker/Dockerfile -t smlm-labflow:runpod .
 bash scripts/runpod_smoke_test.sh smlm-labflow:runpod
@@ -15,6 +30,17 @@ image reference from the successful workflow summary. The convenient `:runpod-fe
 alias points at the most recently tested development build; use the commit tag
 or digest to reproduce a particular build. It does not replace `:latest`.
 Private GHCR packages need registry credentials in RunPod.
+
+Heavyweight CI builds are opt-in: create or update `docker/runpod/build-request.txt`
+and push it to the development branch to request a build of that commit. Ordinary
+source pushes only run the fast tests. The workflow also supports manual dispatch
+where GitHub exposes it. A local build/push is available at any time:
+
+```bash
+docker build --target runpod -f docker/Dockerfile -t ghcr.io/<owner>/smlm-labflow:runpod-feat .
+bash scripts/runpod_smoke_test.sh ghcr.io/<owner>/smlm-labflow:runpod-feat
+docker push ghcr.io/<owner>/smlm-labflow:runpod-feat
+```
 
 ## Template settings
 

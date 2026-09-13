@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime AS liteloc
+FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime AS liteloc-deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -111,13 +111,14 @@ print("RecursiveNamespace import: OK")
 print("LiteLoc/LabFlow dependency smoke test: OK")
 PY
 
+FROM liteloc-deps AS liteloc
 COPY . /workspace/smlm-labflow
 
 CMD ["python", "run_pipeline.py", "--help"]
 
 # Interactive RunPod target. Keep the legacy CUDA/spline stack isolated from
 # the Python >=3.11 core required by the registry-driven pipeline / Snakemake.
-FROM liteloc AS runpod
+FROM liteloc-deps AS runpod
 LABEL org.opencontainers.image.source="https://github.com/rozadibrahim/smlm-labflow"
 LABEL org.opencontainers.image.description="LabFlow analysis core and isolated LiteLoc dependencies for interactive RunPod use"
 
@@ -127,7 +128,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # /workspace is a volume on RunPod; application code and built environments
 # must remain visible when an empty or existing volume is mounted there.
-RUN mv /workspace/smlm-labflow /opt/smlm-labflow
 WORKDIR /opt/smlm-labflow
 
 RUN conda create -y --override-channels -c conda-forge \
@@ -141,7 +141,22 @@ ENV MPLBACKEND=Agg
 ENV LABFLOW_LEGACY_PYTHON=/opt/conda/envs/smlm-labflow/bin/python
 ENV CONDA_DEFAULT_ENV=""
 
-RUN python -m pip install --no-cache-dir -e '.[light]' \
+# Only dependency metadata invalidates this expensive layer. Editing adapters,
+# profiles, docs or application code reuses all built Python/CUDA environments.
+COPY pyproject.toml /tmp/labflow-pyproject.toml
+RUN python - <<'PY'
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+project = tomllib.loads(Path('/tmp/labflow-pyproject.toml').read_text())['project']
+requirements = project['dependencies'] + project['optional-dependencies']['light']
+subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-cache-dir',
+                       'setuptools', 'wheel', *requirements])
+PY
+
+COPY . /opt/smlm-labflow
+RUN python -m pip install --no-cache-dir --no-deps --no-build-isolation -e . \
     && python -m pip check \
     && python docker/runpod/configure.py \
     && python -m pip freeze --exclude-editable > /opt/labflow-core.freeze.txt \

@@ -3,6 +3,9 @@ name: Build RunPod pipeline image
 on:
   push:
     branches: [feat/labflow-pipeline, 'codex/runpod-*']
+    # Opt into a heavyweight build by updating this small request file. Ordinary
+    # source pushes keep using the fast test workflow.
+    paths: ['docker/runpod/build-request.txt']
   workflow_dispatch:
 
 permissions:
