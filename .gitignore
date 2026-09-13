@@ -110,6 +110,8 @@ __pycache__/
 
 # Per-tool environments (recreate from docs/environments.md + lockfiles)
 envs/
+backends/
+models/
 
 # OS
 .DS_Store

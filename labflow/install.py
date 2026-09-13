@@ -1,28 +1,17 @@
-"""
-labflow.install
+"""Install optional backends in isolated environments from registry recipes.
 
-`labflow install <tool>` — automatic, reproducible, isolated dependency
-installation, designed so a biologist never resolves or builds a dependency.
-
-Best path (heavy tools): a prebuilt, version-pinned image is *pulled* (not built)
-from a registry — the dependency-error class disappears because nothing is solved
-on the user's machine. Light pure-python tools install as a pip extra.
-
-Container engine is selectable (so labs without a Docker daemon, or HPC, work):
-    LABFLOW_CONTAINER_ENGINE=docker   (default)
-    LABFLOW_CONTAINER_ENGINE=apptainer
-
-A method's `install:` block (+ `runtime`) declares how:
-    runtime: docker  install: {pull: true}            -> docker/apptainer pull {image}
-    runtime: docker  install: {context: docker/<t>}   -> docker build (local, fallback)
-    runtime: venv    install: {pip: [...], git: ...}  -> envs/<env> venv
-    runtime: conda   install: {conda_file: ...}       -> conda env
-    runtime: python  install: {extra, probe}          -> pip install ".[extra]"
+A native install succeeds only after dependency checks and target-interpreter
+imports pass. A receipt and resolved package inventory are kept in the environment.
+This is installation evidence; conformance and reference checks establish whether
+an adapter actually works. Docker/Apptainer paths remain available for registered
+container methods. Unimplemented adapters fail before downloading dependencies.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -48,7 +37,48 @@ def _envdir(env: str) -> Path:
     p = Path(env)
     if p.is_absolute():
         return p
-    return REPO_ROOT / p if ("/" in env or os.sep in env) else REPO_ROOT / "envs" / env
+    root = Path(os.environ.get("LABFLOW_ENV_ROOT", str(REPO_ROOT / "envs"))).resolve()
+    # Accept both historical spellings: 'miro' and 'envs/miro'.
+    if p.parts and p.parts[0] == "envs":
+        p = Path(*p.parts[1:])
+    return root / p
+
+
+def _recipe_hash(spec):
+    inst = spec.get("install", {})
+    payload = {"install": inst}
+    if inst.get("requirements"):
+        path = REPO_ROOT / inst["requirements"]
+        payload["requirements_content"] = path.read_text() if path.is_file() else None
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _tool_env(spec):
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    models = str(Path(os.environ.get("LABFLOW_MODEL_ROOT", str(REPO_ROOT / "models"))).resolve())
+    env.update({str(k): str(v).replace("{models}", models)
+                for k, v in spec.get("environment", {}).items()})
+    return env
+
+
+def _probe_venv(spec, *, explain=False):
+    probes = (spec.get("install") or {}).get("probe", [])
+    probes = [probes] if isinstance(probes, str) else probes
+    py = _venv_python(_envdir(spec.get("env", spec["name"])))
+    if not py.exists():
+        return False
+    # Import in the target interpreter, never infer success from a directory.
+    code = "import importlib,json,sys; [importlib.import_module(x) for x in json.loads(sys.argv[1])]"
+    try:
+        proc = subprocess.run([str(py), "-c", code, json.dumps(probes)],
+                              env=_tool_env(spec), capture_output=True, text=True, timeout=90)
+        if explain and proc.returncode:
+            print((proc.stderr or proc.stdout)[-3000:])
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _venv_python(envdir: Path) -> Path:
@@ -68,7 +98,12 @@ def _run(cmd: List[str]) -> bool:
 
 
 def is_installed(spec: Dict[str, Any]) -> bool:
+    if spec.get("implementation") == "stub":
+        return False
     runtime = str(spec.get("runtime", "python")).lower()
+    script = (spec.get("install") or {}).get("script")
+    if script:
+        return _run([sys.executable, str(REPO_ROOT / script), "--check"])
 
     # A required external binary (e.g. julia, fiji) must be on PATH regardless of
     # runtime -- lets a tool that shells out report "needs its env" cleanly instead
@@ -84,7 +119,12 @@ def is_installed(spec: Dict[str, Any]) -> bool:
         return bool(image) and _run(["docker", "image", "inspect", image])
 
     if runtime == "venv":
-        return _venv_python(_envdir(spec.get("env", ""))).exists()
+        receipt = _envdir(spec.get("env", spec["name"])) / ".labflow-install.json"
+        try:
+            recorded = json.loads(receipt.read_text())
+            return recorded.get("recipe_hash") == _recipe_hash(spec) and _probe_venv(spec)
+        except (OSError, ValueError):
+            return False
 
     if runtime == "conda":
         env = spec.get("env", "")
@@ -116,7 +156,8 @@ def _source_cmds(inst: Dict[str, Any], src: Path, pip: List[str]) -> List[List[s
     """
     cmds: List[List[str]] = []
     if inst.get("git"):
-        cmds.append(["git", "clone", "--depth", "1", inst["git"], str(src)])
+        if not src.exists():
+            cmds.append(["git", "clone", "--depth", "1", inst["git"], str(src)])
     if inst.get("requirements"):
         cmds.append(pip + ["-r", str(REPO_ROOT / inst["requirements"])])
     if inst.get("requirements_in_src"):
@@ -135,6 +176,9 @@ def plan(spec: Dict[str, Any], *, build: bool = False) -> List[List[str]]:
     name = spec["name"]
     cmds: List[List[str]] = []
 
+    if inst.get("script"):
+        return [[sys.executable, str(REPO_ROOT / inst["script"])]]
+
     if runtime == "docker":
         image = spec.get("image", "")
         if engine() == "apptainer":                     # daemonless / HPC
@@ -152,11 +196,14 @@ def plan(spec: Dict[str, Any], *, build: bool = False) -> List[List[str]]:
         pip = [str(_venv_python(envdir)), "-m", "pip", "install"]
         cmds.append([sys.executable, "-m", "venv", str(envdir)])
         cmds += _source_cmds(inst, envdir.parent / f"{envdir.name}_src", pip)
+        cmds.append([str(_venv_python(envdir)), "-m", "pip", "check"])
 
     elif runtime == "conda":
         env = spec.get("env", name)
         cf = inst.get("conda_file")
         if cf:                                  # build the env from the spec file
+            if not (REPO_ROOT / cf).is_file():
+                raise ValueError(f"{name}: missing environment recipe: {cf}")
             cmds.append(["conda", "env", "create", "-n", env, "-f", str(REPO_ROOT / cf)])
         else:                                   # or a bare env at a chosen python
             cmds.append(["conda", "create", "-y", "-n", env,
@@ -175,16 +222,20 @@ def plan(spec: Dict[str, Any], *, build: bool = False) -> List[List[str]]:
 def install_tool(name: str, *, dry_run: bool = False, force: bool = False,
                  build: bool = False, reg=None) -> None:
     spec = resolve(name, reg)
+    if spec.get("implementation") == "stub":
+        raise RuntimeError(f"{name}: adapter is not implemented; installing dependencies cannot make it runnable. "
+                           + str(spec.get("description", "")))
     runtime = str(spec.get("runtime", "python")).lower()
     inst = spec.get("install") or {}
 
     rc = inst.get("requires_cmd")
     if rc and shutil.which(rc) is None:
-        print(f"{name}: needs the external '{rc}' binary on PATH (not auto-installable). "
-              f"Obtain it and add it to PATH. {spec.get('description', '')}")
-        return
+        raise RuntimeError(f"{name}: needs the external '{rc}' binary on PATH. "
+                           f"{spec.get('description', '')}")
 
-    if runtime in IN_CORE and not inst.get("extra"):
+    if runtime in IN_CORE and not inst.get("extra") and not inst.get("script"):
+        if not is_installed(spec):
+            raise RuntimeError(f"{name}: required backend is absent and no automatic install recipe is available.")
         extra_note = f" (uses the '{rc}' binary)" if rc else ""
         print(f"{name}: runtime '{runtime}', no extra deps - already in the core env{extra_note}.")
         return
@@ -214,11 +265,20 @@ def install_tool(name: str, *, dry_run: bool = False, force: bool = False,
 
     eng = f", {engine()}" if runtime == "docker" else ""
     print(f"installing '{name}' ({runtime}{eng}){' [dry-run]' if dry_run else ''}:")
+    if runtime == "venv" and not dry_run:
+        (_envdir(spec.get("env", name)) / ".labflow-install.json").unlink(missing_ok=True)
     for cmd in cmds:
         print("  $ " + " ".join(cmd))
         if not dry_run:
-            cwd = str(REPO_ROOT) if cmd[0] in (sys.executable, "docker", "apptainer") else None
-            if subprocess.run(cmd, cwd=cwd).returncode != 0:
+            if subprocess.run(cmd, cwd=str(REPO_ROOT), env=_tool_env(spec)).returncode != 0:
                 raise RuntimeError(f"install step failed for {name}: {' '.join(cmd)}")
     if not dry_run:
+        if runtime == "venv":
+            if not _probe_venv(spec, explain=True):
+                raise RuntimeError(f"{name}: dependencies installed but backend import checks failed.")
+            envdir = _envdir(spec.get("env", name))
+            freeze = subprocess.check_output([str(_venv_python(envdir)), "-m", "pip", "freeze"], text=True)
+            (envdir / ".labflow-freeze.txt").write_text(freeze)
+            (envdir / ".labflow-install.json").write_text(json.dumps({
+                "method": name, "recipe_hash": _recipe_hash(spec), "python": str(_venv_python(envdir))}, indent=2))
         print(f"{name}: installed. Run:  labflow run {spec.get('stage')} -b {name} ...")

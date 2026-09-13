@@ -1,5 +1,9 @@
 # RunPod image for the expanded pipeline
 
+The engineering checkout and native backend installations described in
+[the acceptance report](engineering-acceptance.md) were applied to the live Pod.
+They are not yet baked into the published startup image.
+
 Build the `runpod` target from the `feat/labflow-pipeline` branch (or its image
 update branch). The `liteloc` target preserves the previous batch image.
 
@@ -159,8 +163,9 @@ labflow demo --out /workspace/outputs/demo
 ```
 
 Conformance reports PASS / FAIL / SKIP; a registered method is not necessarily
-installed or implemented. Heavy optional tools (Cellpose, StarDist, MAGIK, etc.)
-retain their own environments. Standard RunPod pods cannot be assumed to support
+installed or implemented. The current source branch provides native isolated installs for Cellpose, StarDist,
+micro-SAM and Omnipose; these are not baked into the published startup image.
+Other heavy tool entries still need adapter implementation or environment work. Standard RunPod pods cannot be assumed to support
 nested Docker: their existing `runtime: docker` entries need a supported separate
 execution host or an explicitly implemented venv/conda setup. Nextflow, Julia,
 Fiji and MATLAB are not bundled in this image.

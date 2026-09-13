@@ -8,11 +8,11 @@ A modular pipeline wrapper for **Single-Molecule Localization Microscopy (SMLM)*
 
 It handles the engineering overhead — QC, calibration, training, inference, export, benchmarking, and reporting — so you can focus on the science.
 
-> **Status:** active — ~50 methods across 13 stages; 24 run in-core out of the box  
-> **Install:** [docs/install.md](docs/install.md) — conda / pixi / napari (lab users) **or** pip / CLI / HPC (developers)  
+> **Status:** engineering validation in progress; the 50 registry entries include unfinished adapters and two mechanism tests. See [measured acceptance status](docs/engineering-acceptance.md).
+> **Install:** [source checkout and modular installation](docs/install.md), tested on Linux/Python 3.12.
 > **Architecture:** registry-driven — one [`config/methods.yaml`](config/methods.yaml) drives the CLI **and** Snakemake + Nextflow
 
-### Try it in 30 seconds (no microscope data)
+### Try the synthetic workflow (no microscope data)
 
 ```bash
 pip install -e ".[light]"      # or, when published:  mamba install -c conda-forge smlm-labflow
@@ -21,9 +21,9 @@ labflow conformance            # shows which methods actually run on your machin
 labflow list                   # every method, grouped by stage
 ```
 
-Biologists can instead use the **napari plugin** (Plugins → *Open LabFlow run*) or a locked
-**pixi** environment — see [docs/install.md](docs/install.md). Heavy tools install on demand
-(`labflow install cellpose`) as isolated, prebuilt images.
+Segmentation tools install on demand (`labflow install cellpose`) into isolated
+virtual environments. Napari review is optional. Packaging, desktop GUI behavior
+and additional adapters have separate acceptance gates; see [installation](docs/install.md).
 
 ---
 
@@ -233,13 +233,13 @@ labflow review outputs/.../results --with napari   # inspect a run in napari
 labflow pipeline --cores 4 --config cluster=true spatial_stats=true
 ```
 
-Backends run now (in-process): `drift` (none/rcc/aim_julia/dme), `cluster`
-(dbscan/optics/hdbscan), `spatial_stats` (ripley/paircorrelation/nnd/voronoi),
-`track` (trackpy). The rest (DECODE, FD-DeepLoc, Cellpose, StarDist, MAGIK, MIRO,
-DeepTRACE, TrackMate, ClusterNet, qPAINT, …) are registered and wired, `ready`
-once their environment is built. See [docs/methods.md](docs/methods.md) (add a
-method), [docs/environments.md](docs/environments.md) (per-tool envs), and
-[docs/snakemake_backends.md](docs/snakemake_backends.md) (drift internals).
+The light analysis backends have synthetic execution tests. Cellpose, StarDist,
+micro-SAM and Omnipose have native installation recipes; LiteLoc uses a separate
+Python/spline environment and a pinned upstream checkout. Fifteen other adapters
+still contain unfinished bindings: installing their dependencies does **not**
+make them usable. DECODE and DME have additional installation/integration gaps.
+See [engineering acceptance](docs/engineering-acceptance.md) for exact tested
+capabilities and remaining work, and [environments](docs/environments.md) for isolation.
 
 ---
 
@@ -258,10 +258,10 @@ method), [docs/environments.md](docs/environments.md) (per-tool envs), and
 
 ## Limitations
 
-- LiteLoc must be installed separately
+- LiteLoc source and dependencies install separately with `labflow install liteloc`; models and calibration are separate inputs
 - Profiles and backend YAMLs must match your microscope and PSF setup
 - Some QC metrics are experimental
-- Scientific validation is the responsibility of the user
+- Small reference/integration checks are required before release; this project does not repeat the upstream papers’ scientific benchmarks
 
 ---
 

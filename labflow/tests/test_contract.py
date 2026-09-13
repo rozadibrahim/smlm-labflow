@@ -38,11 +38,23 @@ def test_cluster_requires_cluster_id(tmp_path):
         validate(bad, "cluster")
 
 
-def test_non_csv_output_is_skipped(tmp_path):
+def test_truncated_segment_tiff_is_rejected(tmp_path):
     tif = tmp_path / "masks.tif"
     tif.write_bytes(b"II*\x00")   # a mask image, not a table
-    validate(tif, "segment")      # segment has no CSV contract anyway
-    validate(tif, "cluster")      # even a contract stage: non-CSV artifact -> skip
+    with pytest.raises(ContractError, match="readable TIFF"):
+        validate(tif, "segment")
+
+
+def test_segment_integer_labels_and_float_rejection(tmp_path):
+    import numpy as np
+    import tifffile
+    path = tmp_path / "labels.tif"
+    tifffile.imwrite(path, np.array([[0, 1], [70000, 70000]], dtype=np.uint32))
+    validate(path, "segment")
+    tifffile.imwrite(path, np.ones((2, 2), dtype=np.float32))
+    with pytest.raises(ContractError, match="integer labels"):
+        validate(path, "segment")
+    validate(path, "cluster")      # non-CSV outputs use their own stage contract
 
 
 def test_missing_file_raises(tmp_path):

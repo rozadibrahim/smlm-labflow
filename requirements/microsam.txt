@@ -1,0 +1,5 @@
+# micro-SAM with a Blackwell-compatible PyTorch, isolated from the core.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+micro-sam==1.8.14

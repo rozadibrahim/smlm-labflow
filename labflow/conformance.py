@@ -26,7 +26,9 @@ Run:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+import json
+from contextlib import nullcontext
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
@@ -153,14 +155,17 @@ class Result:
     elapsed: Optional[float] = None
 
 
-def run_conformance(stage: Optional[str] = None, reg=None) -> List[Result]:
+def run_conformance(stage: Optional[str] = None, reg=None, output_dir=None) -> List[Result]:
     """Run the smoke test and return one Result per method (grouped by stage)."""
     reg = reg if reg is not None else load_registry()
     # Structurally-incomplete entries (a planned scaffold with no command/entry/env)
     # are not runnable -- skip them with the lint reason rather than crashing.
     unrunnable = {name: msg for _lvl, name, msg in validate_registry(reg)}
     results: List[Result] = []
-    with TemporaryDirectory(prefix="labflow_conf_") as tmp:
+    if output_dir:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    workspace = nullcontext(str(output_dir)) if output_dir else TemporaryDirectory(prefix="labflow_conf_")
+    with workspace as tmp:
         d = Path(tmp)
         fx = _write_fixtures(d)
         for st in reg_stages(reg):
@@ -170,6 +175,9 @@ def run_conformance(stage: Optional[str] = None, reg=None) -> List[Result]:
                 s = dict(spec)
                 s["name"] = name
                 rt = str(s.get("runtime", "python"))
+                if s.get("implementation") == "stub":
+                    results.append(Result(name, st, rt, "SKIP", "adapter not implemented"))
+                    continue
                 skip_reason = (s.get("conformance") or {}).get("skip")
                 if skip_reason:
                     results.append(Result(name, st, rt, "SKIP", str(skip_reason)))
@@ -180,16 +188,40 @@ def run_conformance(stage: Optional[str] = None, reg=None) -> List[Result]:
                 kind = STAGE_FIXTURE.get(st)
                 if not kind or kind not in fx:
                     results.append(Result(name, st, rt, "SKIP",
-                                          "no synthetic fixture (needs real data)"))
+                                          "no engineering fixture configured (model/calibration may be required)"))
                     continue
                 if not is_installed(s):
                     results.append(Result(name, st, rt, "SKIP", "not installed (needs its env)"))
                     continue
                 inp = fx[kind]
-                out = d / f"out_{name}{inp.suffix}"
+                method_dir = d / name
+                method_dir.mkdir(exist_ok=True)
+                out = method_dir / f"output{inp.suffix}"
                 t0 = time.perf_counter()
                 try:
-                    run_method(name, input_path=str(inp), output_path=str(out), reg=reg)
+                    parameters = dict((s.get("conformance") or {}).get("params") or {})
+                    if name in ("xgboost", "lightgbm"):
+                        # Tiny disposable supervised fixture: exercise model
+                        # serialization and adapter prediction, not QC accuracy.
+                        import joblib
+                        frame = pd.read_csv(inp)
+                        x = frame[["photons", "sigma"]].to_numpy()
+                        y = (frame["photons"].to_numpy() < 100).astype(int)
+                        if name == "xgboost":
+                            from xgboost import XGBClassifier
+                            model = XGBClassifier(n_estimators=2, max_depth=2, n_jobs=1, random_state=0)
+                        else:
+                            from lightgbm import LGBMClassifier
+                            model = LGBMClassifier(n_estimators=2, num_leaves=4, n_jobs=1, random_state=0, verbosity=-1)
+                        model.fit(x, y)
+                        model_path = method_dir / "fixture-model.joblib"
+                        joblib.dump(model, model_path)
+                        parameters["model_path"] = str(model_path)
+                    run_method(name, input_path=str(inp), output_path=str(out), reg=reg,
+                               params=parameters)
+                    if name in ("xgboost", "lightgbm"):
+                        np.testing.assert_allclose(pd.read_csv(out)["qc_score"],
+                            np.round(model.predict_proba(x)[:, -1], 4), atol=1e-7)
                     dt = round(time.perf_counter() - t0, 2)
                     if Path(out).exists():
                         results.append(Result(name, st, rt, "PASS", "", dt))
@@ -201,7 +233,14 @@ def run_conformance(stage: Optional[str] = None, reg=None) -> List[Result]:
                 except Exception as exc:
                     results.append(Result(name, st, rt, "FAIL", _first_line(exc),
                                           round(time.perf_counter() - t0, 2)))
+    if output_dir:
+        (Path(output_dir) / "conformance.json").write_text(json.dumps([asdict(r) for r in results], indent=2))
     return results
+
+
+def required_failures(results, required):
+    by_name = {r.name: r for r in results}
+    return [name for name in required if name not in by_name or by_name[name].status != "PASS"]
 
 
 def _first_line(exc: Exception) -> str:

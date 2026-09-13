@@ -1,97 +1,75 @@
 # Installing SMLM LabFlow
 
-There are **two front doors** — pick by who you are. They install the *same* tool; the
-biologist path is turnkey and locked, the developer path gives full control. Neither
-removes the other.
+The supported engineering path is currently a **source checkout on Linux with
+Python 3.12**, followed by an isolated core and optional backend environments.
+A registry entry is not a promise that its adapter is implemented. See
+[engineering acceptance](engineering-acceptance.md) for the measured status.
 
----
-
-## A. Biologists / lab users (no code)
-
-Pick whichever your lab already uses.
-
-### conda / mamba (recommended)
 ```bash
-mamba install -c conda-forge smlm-labflow      # once published to conda-forge
-labflow doctor                                 # check your install
-labflow conformance                            # prove the in-core backends run here
+git clone --branch codex/runpod-pipeline-image https://github.com/rozadibrahim/smlm-labflow.git
+cd smlm-labflow
+python3.12 bootstrap.py --extras light,dev
+source envs/labflow/bin/activate
+labflow doctor
+labflow demo --out outputs/demo
+labflow conformance --output-dir outputs/conformance --require rcc --require trackpy
 ```
 
-### pixi (locked, reproducible on any OS, works offline)
-A committed `pixi.lock` pins every dependency bit-for-bit on Windows/macOS/Linux:
-```bash
-pixi install -e light          # build the locked environment
-pixi run -e light labflow conformance
-pixi shell -e gui              # then run the napari GUI below
-```
-For an offline microscope PC, ship the solved env with `pixi-pack` (no internet needed
-on the target).
+The analysis core requires Python >=3.11. The LiteLoc backend has its own Python
+3.9/spline environment; do not install the analysis core into it.
 
-### napari (GUI — no command line)
-```bash
-pip install "smlm-labflow[gui]"      # or: mamba install -c conda-forge smlm-labflow napari
-napari                               # Plugins menu -> "SMLM LabFlow: Open LabFlow run"
-```
-Point it at a run folder (or a localizations/clusters CSV) to view it as napari layers
-(clusters coloured by `cluster_id`).
+## Optional backends
 
-### Getting a heavy tool (Cellpose, DECODE, …)
-Still one line — it pulls a prebuilt, isolated image; nothing is compiled on your machine:
 ```bash
 labflow install cellpose
+labflow install stardist
+labflow install microsam
+labflow install omnipose
+labflow installed
+labflow conformance --stage segment --require cellpose --require stardist \
+  --output-dir outputs/segmentation-check
 labflow run segment -b cellpose -i image.tif -o masks.tif
 ```
 
----
+These four segmenters install into separate virtual environments. Their default
+recipes do not need Docker. Cellpose, micro-SAM and Omnipose use pinned CUDA 12.8
+PyTorch wheels compatible with the tested Blackwell Pod; StarDist uses isolated
+CPU TensorFlow. GPU use is a backend parameter, not evidence that a model was
+validated on your microscope data. Models may download on first execution.
 
-## B. Developers / power users / HPC
+`labflow install liteloc` installs a pinned upstream source checkout and checks
+its imports. On the supplied RunPod image it reuses `LABFLOW_LEGACY_PYTHON`.
+Without that interpreter, its Linux recipe requires conda and creates a separate
+Python 3.9 environment. The existing-image reuse path has been tested on the Pod;
+a completely fresh LiteLoc environment from this new command still needs its own
+clean-install CI gate. Run `scripts/check_liteloc_engineering.py` with that backend
+interpreter to test small CPU/CUDA operations on the upstream network. Models,
+PSF calibration and experiment profiles are separate inputs.
 
-The full control path — unchanged and fully supported.
+Unimplemented adapters fail explicitly. Installing packages cannot complete an
+adapter. Do not treat SKIP as engineering acceptance: `--require NAME` demands an
+actual PASS, including when the named method was not selected by `--stage`.
+
+## RunPod storage
+
+Keep source, data, model downloads and validation results on `/workspace`.
+Keep executable environments on the container's local filesystem when the
+network volume cannot preserve executable/private-file permissions:
 
 ```bash
-# editable install with the light in-core backends + dev tools
-python -m venv envs/labflow && envs/labflow/bin/pip install -e ".[light,dev]"
-#   (or one command for any machine: python bootstrap.py --extras light,dev)
-
-labflow list                          # every method, grouped by stage
-labflow run cluster -b dbscan -i locs.csv -o clusters.csv --param eps=120
-labflow install decode                # build/pull a tool's isolated env/image
-labflow pipeline --engine snakemake --cores 4
-labflow pipeline --engine nextflow  -c conf/mylab.config   # HPC/cloud (see conf/README.md)
-pytest labflow/tests driftcorr/tests  # the test suite
+export LABFLOW_ENV_ROOT=/opt/labflow-envs
+export LABFLOW_MODEL_ROOT=/workspace/models
 ```
 
-### Make `labflow` callable from anywhere (no venv activation)
+Set these consistently for both installation and execution. They override the
+portable defaults `envs/` and `models/` beneath the checkout. Container replacement
+loses environments under `/opt`; the recipes and recorded package lists make
+reinstallation possible. They are not automatically installed during SSH startup.
 
-`labflow` is a real entry point, but it lives in the project's env. To run it as plain
-`labflow` from any directory in bash:
+## Distribution and GUI status
 
-```bash
-bash scripts/install_cli.sh     # writes ~/.local/bin/labflow -> this repo's env
-                                # (add ~/.local/bin to PATH if it prints the one-liner)
-labflow help                    # now works from anywhere
-```
-
-Cross-platform alternative (isolated, on PATH automatically): `pipx install -e .`
-(or `pipx install smlm-labflow` once published). Or just activate the env:
-`source envs/labflow/Scripts/activate` (Windows) / `source envs/labflow/bin/activate`.
-
-- **Per-tool isolation / GPU / Apptainer:** [docs/environments.md](environments.md)
-- **Add a method (one YAML entry):** [docs/methods.md](methods.md)
-- **HPC / institutional configs:** [conf/README.md](../conf/README.md)
-- **Build + publish the tool images:** [.github/workflows/build-images.yml](../.github/workflows/build-images.yml)
-- **Pin images to digests:** `bash scripts/pin_images.sh`
-
----
-
-## Which gives what
-
-| | conda/mamba | pixi | napari | pip (dev) |
-|---|---|---|---|---|
-| audience | lab users | lab users / reproducibility | bench scientists (GUI) | developers / HPC |
-| locked & cross-platform | partial | **yes (pixi.lock)** | no | via lockfiles |
-| GUI | — | — | **yes** | — |
-| add a method / full CLI | yes | yes | — | **yes** |
-
-Heavy tools are isolated and fetched on demand via `labflow install` regardless of path,
-so no front door pulls a multi-GB dependency you didn't ask for.
+Conda-forge/PyPI publication, a verified multiplatform package, offline bundles,
+and a complete GUI workflow are separate release tasks. This document does not
+claim those distribution routes are already published or tested. Napari review
+is optional and needs a suitable display; headless backend execution is tested
+separately from desktop GUI behavior.

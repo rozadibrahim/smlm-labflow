@@ -3,7 +3,7 @@
 micro-SAM segmentation runner -- runs INSIDE the smlm-labflow/microsam image,
 invoked by labflow's `runtime: docker` segment method over the file contract.
 
-Contract: image in (TIFF) -> uint16 label mask out (TIFF). Uses micro_sam's
+Contract: image in (TIFF) -> uint32 label mask out (TIFF). Uses micro_sam's
 automatic instance segmentation (Segment Anything fine-tuned for microscopy; Archit
 et al. 2024). The helper's signature has evolved across releases, so the call is
 guarded -- on a mismatch it fails with an actionable message rather than wrong masks.
@@ -37,7 +37,7 @@ def main() -> None:
             "\nAdjust docker/microsam/run_microsam.py to your installed micro_sam version "
             "(see micro_sam.automatic_segmentation).")
 
-    tifffile.imwrite(args.out, np.asarray(masks).astype(np.uint16))
+    tifffile.imwrite(args.out, np.asarray(masks).astype(np.uint32))
     print(f"micro-sam: segmented {int(np.asarray(masks).max())} objects -> {args.out}")
 
 

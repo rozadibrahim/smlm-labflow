@@ -53,9 +53,20 @@ def _header(path: Path) -> List[str]:
 def validate(path, stage, *, role: str = "output") -> None:
     """Raise ContractError if `path` (a CSV produced by `stage`) is non-conforming.
 
-    No-op for stages without a CSV contract and for non-CSV files (e.g. mask TIFFs)
-    — those stages cross the boundary with a different, non-tabular artifact.
+    Segmentation has an integer-label TIFF contract. Other stages without a
+    declared CSV contract are left to their adapter-specific checks.
     """
+    if stage == "segment":
+        import numpy as np
+        import tifffile
+        p = Path(path)
+        try:
+            mask = tifffile.imread(p)
+        except Exception as exc:
+            raise ContractError(f"{role} of segment is not a readable TIFF: {p}") from exc
+        if mask.ndim not in (2, 3) or not np.issubdtype(mask.dtype, np.integer) or mask.size == 0 or mask.min() < 0:
+            raise ContractError(f"{role} of segment must be a nonempty 2D/3D array of nonnegative integer labels: {p}")
+        return
     req = required_for(stage)
     if not req:
         return

@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from labflow.conformance import run_conformance
+from labflow.conformance import Result, required_failures
 
 # In-core / light tools: if present on this machine, conformance must be PASS.
 MUST_PASS = {
@@ -28,8 +29,25 @@ MUST_PASS = {
     "render",                                          # render (SR image)
     "frc", "nena",                                    # metrics (resolution + precision)
     "randomforest",                                   # qc_audit
+    "xgboost", "lightgbm",                            # synthetic saved models
     "_selftest_local",                               # local subprocess mechanism
 }
+
+
+def test_required_tool_cannot_pass_by_skipping():
+    results = [Result("working", "test", "local", "PASS"),
+               Result("missing", "test", "venv", "SKIP", "not installed")]
+    assert required_failures(results, ["working", "missing", "unknown"]) == ["missing", "unknown"]
+
+
+def test_conformance_keeps_evidence(tmp_path):
+    import json
+    reg = {"methods": {"passthrough": {"stage": "test", "runtime": "local",
+        "command": ["python", "-c", "import shutil,sys;shutil.copy(sys.argv[1],sys.argv[2])", "{input}", "{output}"]}}}
+    result, = run_conformance(reg=reg, output_dir=tmp_path)
+    assert result.status == "PASS"
+    assert (tmp_path / "passthrough" / "output.csv.labflow.json").exists()
+    assert json.loads((tmp_path / "conformance.json").read_text())[0]["status"] == "PASS"
 
 
 def test_core_tools_pass_conformance():

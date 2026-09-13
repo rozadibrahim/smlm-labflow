@@ -7,7 +7,7 @@ name = "smlm-labflow"
 version = "0.3.0"
 description = "Reproducible orchestration and benchmarking for single-molecule localization microscopy."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Rozad Ibrahim" }]
 keywords = ["SMLM", "super-resolution", "microscopy", "localization", "snakemake"]

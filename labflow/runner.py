@@ -62,6 +62,9 @@ def _run_external(spec, merged, input_path, output_path) -> str:
     ctx = {"input": str(input_path), "output": str(output_path),
            "repo": str(REPO_ROOT), "p": SimpleNamespace(**merged)}
     args = _fmt(spec["command"], ctx, json.dumps(merged, separators=(",", ":")))
+    if spec.get("python_env") and args[0] in ("python", "python3"):
+        from .install import _envdir, _venv_python
+        args[0] = os.environ.get(spec["python_env"], str(_venv_python(_envdir(spec["env"]))))
     proc = subprocess.run(args, cwd=str(REPO_ROOT))
     _check(proc, spec["name"], args)
     return str(output_path)
@@ -100,10 +103,13 @@ def _run_subprocess(spec, runtime, merged, input_path, output_path) -> str:
             args = _fmt(spec["command"], ctx, pjson)
             cwd = str(work)
             if runtime == "venv":
-                env_dir = Path(spec["env"])
+                from .install import _envdir, _venv_python, _tool_env
+                env_dir = _envdir(spec["env"])
                 bin_dir = env_dir / ("Scripts" if os.name == "nt" else "bin")
-                env = os.environ.copy()
+                env = _tool_env(spec)
                 env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+                if args[0] in ("python", "python3"):
+                    args[0] = str(_venv_python(env_dir))
             elif runtime == "conda":
                 args = ["conda", "run", "-n", spec["env"]] + args
             elif runtime != "local":
@@ -134,6 +140,8 @@ def run_method(
     reg: Optional[Dict[str, Any]] = None,
 ) -> str:
     spec = resolve(name, reg)
+    if spec.get("implementation") == "stub":
+        raise NotImplementedError(f"{name}: adapter is not implemented. {spec.get('description', '')}")
 
     if str(spec.get("status", "ready")).lower() != "ready":
         from .install import is_installed
