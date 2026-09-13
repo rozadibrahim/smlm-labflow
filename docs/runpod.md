@@ -105,6 +105,41 @@ The newer core does not upgrade LiteLoc's Torch or spline ABI. Do not assume the
 legacy CUDA stack supports a newer GPU architecture; validate on your target GPU
 before running experiments. The build and CI checks do not use a GPU.
 
+### Blackwell GPUs on the current image
+
+The RTX PRO 6000 Blackwell (sm_120) cannot execute kernels from the baked
+Torch 2.2.2/CUDA 12.1 installation. After SSH login, use the optional upgrade
+overlay from this branch:
+
+```bash
+bash scripts/upgrade_runpod_blackwell.sh
+```
+
+Run this from a checkout containing that script and `requirements/blackwell.txt`.
+It backs up the existing GPU environment under `/opt`, then installs the official
+Torch 2.7.1, torchvision 0.22.1 and torchaudio 2.7.1 CUDA 12.8 wheels into the
+existing Python 3.9 environment. NumPy 1.24.4 and the conda spline package stay
+in place, so the existing CLI, registry and workflow interpreter paths still work.
+This is an explicit repair step, not part of SSH startup. Version pairings follow
+the [official PyTorch installation instructions](https://pytorch.org/get-started/previous-versions/#v271).
+
+The repair records before/after package lists and dependency checks beneath
+`/workspace/outputs/blackwell-upgrade-*`. The legacy environment already reports
+missing core-only click/Snakemake dependencies and hdfdict's stale PyYAML bound;
+the script requires the upgrade to introduce no change to those diagnostics.
+It checks scientific imports and runs CUDA arithmetic, matrix multiplication,
+convolution forward/backward, an optimizer step and torchvision's CUDA NMS.
+These checks establish runtime compatibility, not LiteLoc model accuracy or
+validation of the optional toolkit backends.
+
+The live environment and rollback copy are container-local. A replacement image
+starts from its baked packages, so keep the repair files on `/workspace` and
+reapply explicitly if that local disk is reset. Updating a running Pod does not
+update the GHCR image. `backup-path.txt` in the repair record identifies the
+complete old environment: to roll back, stop GPU jobs, move the modified
+`/opt/conda/envs/smlm-labflow` aside, then move that backup back to the exact
+original path. Do not run the backup at its temporary prefix.
+
 `LABFLOW_LEGACY_PYTHON` routes the Snakemake/Nextflow localization lifecycle to
 the legacy interpreter too. The baked Snakemake defaults read inputs and write
 results beneath `/workspace`; override the scientific settings with your profile.

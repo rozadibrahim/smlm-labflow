@@ -1,0 +1,6 @@
+# Upgrade overlay for the image's Python 3.9 LiteLoc environment.
+# CUDA 12.8 wheels support Blackwell sm_120; preserve NumPy/spline versions.
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+torchaudio==2.7.1+cu128
