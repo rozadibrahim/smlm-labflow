@@ -1,227 +1,123 @@
 # SMLM LabFlow
 
-A modular pipeline wrapper for **Single-Molecule Localization Microscopy (SMLM)** analysis.
+A Python workflow for **Single-Molecule Localization Microscopy (SMLM)**, developed as part of a short M1 research internship.
 
-Developed as part of a short M1 research internship, LabFlow brings together input QC, calibration, training, inference, export, benchmarking, and reporting.
+**Status: work in progress.** The current localization backend is LiteLoc.
 
-> **Status:** work in progress  
-> **Current backend:** LiteLoc  
-> **Architecture:** backend-agnostic (DECODE, DeepSTORM, FD-DeepLoc adapters can be added)
+## Internship context and project contribution
 
----
+This project organizes the steps around SMLM localization: preparing a run, passing calibration and training settings to LiteLoc, processing localization tables, and collecting QC and output files.
 
-## What it does
+LiteLoc provides the localization model and its training/inference implementation. LabFlow's contribution is the workflow around that backend:
 
-LabFlow provides a command-line interface for the SMLM workflow:
+- A command-line interface for calibration, training, and inference.
+- Scientific profiles, machine-specific backend paths, and a registry for reusing calibration/model artifacts.
+- Input QC, conversion to a common localization table, and downstream exports.
+- Benchmarking and run-reporting code.
 
+The code is linked below so each part can be inspected. The [export example](examples/export_demo/README.md) is a reproducible check of one component. An experimental run with its dataset, configuration, and results still needs to be documented here.
+
+## Code map
+
+| Part | Implementation |
+|---|---|
+| Pipeline entry point and profile inheritance | [run_pipeline.py](run_pipeline.py) |
+| Configuration and artifact resolution | [adapters/resolver.py](adapters/resolver.py) |
+| Calls into LiteLoc | [adapters/liteloc_adapter.py](adapters/liteloc_adapter.py) |
+| TIFF input QC | [qc_input.py](qc_input.py) |
+| Localization conversion, QC, and exports | [post_inference.py](post_inference.py) |
+| Standalone canonical CSV exporter | [export_downstream.py](export_downstream.py) |
+| Benchmarking and scientific metrics | [benchmark.py](benchmark.py), [quality_metrics.py](quality_metrics.py) |
+| Run reports | [generate_run_report.py](generate_run_report.py) |
+| Interactive review | [napari_locan_review.py](napari_locan_review.py) |
+
+## Try a small example
+
+The [CPU export example](examples/export_demo/README.md) uses four explicitly synthetic localizations. It runs the existing standalone exporter, saves both output tables, and checks their contents. It needs pandas; LiteLoc, microscopy data, and a GPU are not required.
+
+```bash
+python -m venv .venv-demo
+source .venv-demo/bin/activate
+python -m pip install -r examples/export_demo/requirements.txt
+python examples/export_demo/run.py
 ```
-calibrate → train → infer → QC → export → benchmark → report
-```
 
----
+See the [recorded checks](examples/export_demo/recorded/checks.json) and [sample output](examples/export_demo/recorded/picasso_thunderstorm.csv). These establish the behavior of the standalone export path on the fixture, not localization accuracy or compatibility with every downstream application.
 
-## Quick start
+## Run with LiteLoc
 
-### 1. Install dependencies
+The following commands are setup examples for your own data. The full calibration/training/inference sequence has not been rerun as part of the export example.
+
+### Environment and backend
 
 ```bash
 conda env create -f env_yamls/liteloc_env_base.yml
 conda activate liteloc_env
 ```
 
-### 2. Configure your machine
+Install LiteLoc separately and configure `adapters/backend_paths.yml` using [the example](adapters/backend_paths.example.yml). Set `liteloc.root` to its installation directory and check that the module/function mappings match your LiteLoc revision.
 
-Install LiteLoc separately. Use `adapters/backend_paths.example.yml` as a template and edit `adapters/backend_paths.yml` to point at your local installation:
+The base environment specifies Python 3.9 and PyTorch with CUDA 12.1. Training and inference in the example profile request CUDA. Use a compatible GPU environment for those stages.
 
-```yaml
-liteloc:
-  root: /path/to/LiteLoc
-```
+### Scientific profile
 
-### 3. Choose a profile
+Copy [profiles/liteloc_unified_example.yaml](profiles/liteloc_unified_example.yaml) and adapt the microscope, camera, PSF, and training settings. The supplied values are examples, not a calibration for your instrument.
 
-Copy and adapt `profiles/liteloc_unified_example.yaml` for your microscope setup.
+Machine paths belong in `adapters/backend_paths.yml`; acquisition and analysis settings belong in the profile. Fields set to `auto` are resolved from the run inputs or available registry artifacts. Check the resolved configuration before relying on a reused model or calibration.
 
-### 4. Run the pipeline
+### Commands
+
+Replace the input paths with your data and the profile path with your edited copy. The sibling output folders allow the stages to use the shared registry under `outputs/registry/`.
 
 ```bash
-# Step 1 — calibrate PSF from bead z-stack
 python run_pipeline.py calibrate \
   -i /data/beads \
   -p profiles/liteloc_unified_example.yaml \
-  -o outputs/my_calibration \
-  -b liteloc
+  -o outputs/calibration -b liteloc
 
-# Step 2 — train localization model
 python run_pipeline.py train \
   -i /data/training_frames \
   -p profiles/liteloc_unified_example.yaml \
-  -o outputs/my_training \
-  -b liteloc
+  -o outputs/training -b liteloc
 
-# Step 3 — run inference
 python run_pipeline.py infer \
   -i /data/raw_movies \
   -p profiles/liteloc_unified_example.yaml \
-  -o outputs/my_inference \
-  -b liteloc
+  -o outputs/inference -b liteloc \
+  --export generic --export picasso --export napari
 ```
 
----
+The inference CLI defaults to raw backend output. Select exports explicitly; available choices include `raw`, `generic`, `smap`, `picasso`, `napari`, and `locan`. Add `--dry-run` to preview a stage or `--max-files 1` to limit an inference run.
 
-## Features
+A run organizes artifacts under `results/`, `benchmarks/`, `reports/`, and `registry/`. Inspect stage status, logs, and resolved configuration as well as the localization CSV.
 
-| Feature | Description |
-|---|---|
-| Input QC | Shape, dtype, axes, intensity stats, preview image, histogram |
-| Calibration | `vector_beads`, `spline_file`, `analytic`, or `none` |
-| Backend execution | Adapter-based: add new backends without touching the core |
-| Canonical output | Unified localization CSV across all backends |
-| Export formats | SMAP, Picasso, napari, Locan |
-| Benchmarking | Runtime, memory, resolution, drift, CRLB/RMSE metrics |
-| Reports | Markdown + HTML run reports |
-| Registry | Tracks latest calibration/model/results for reuse across runs |
-| Review helper | Separate napari/Locan viewer (`napari_locan_review.py`) |
+## Design choices and tradeoffs
 
----
+- **Separate paths from scientific settings.** This keeps a microscope profile reusable when LiteLoc is installed somewhere else. The module mappings still depend on the backend version.
+- **Convert to a common table.** A shared schema gives QC and exports a consistent input. Coordinate units, frame conventions, and missing uncertainty fields still need attention.
+- **Reuse artifacts through a registry.** This reduces manual path entry between stages. A previous artifact can belong to a different experimental condition, so compatibility must be checked.
+- **Keep inspection outputs.** QC tables, plots, and run reports provide intermediate evidence to examine when a run behaves unexpectedly. A successful software status alone does not establish scientific validity.
 
-## Project structure
+## Validation and limitations
 
-```
-smlm-labflow/
-├── run_pipeline.py              # Main CLI: calibrate / train / infer
-├── run_folders.py               # Run folder layout
-├── qc_input.py                  # Input movie quality control
-├── schema.py                    # Canonical localization schema
-├── post_inference.py            # Backend output → canonical CSV
-├── export_downstream.py         # Export to SMAP / Picasso / napari / Locan
-├── benchmark.py                 # Runtime + scientific metrics
-├── quality_metrics.py           # Automatic QC metrics
-├── generate_run_report.py       # Markdown/HTML reports
-├── combine_run_outputs.py       # Merge batch outputs
-├── combine_benchmark_comparisons.py
-├── napari_locan_review.py       # Manual review helper
-│
-├── adapters/
-│   ├── backend_paths.yml        # Machine-specific — adapt locally
-│   ├── backend_paths.example.yml
-│   ├── resolver.py              # Merges profile + paths + registry
-│   └── liteloc_adapter.py      # LiteLoc calibrate/train/infer
-│
-├── profiles/                    # Scientific workflow profiles
-├── env_yamls/                   # Conda environments
-└── results/                     # Run outputs (git-ignored)
-```
+- The committed [synthetic example](examples/export_demo/README.md) checks the standalone CSV export path only.
+- No experimental accuracy or runtime result is claimed by that example. Use the [experimental run guide](docs/experimental_run.md) to document a measured result with its context.
+- The standalone `export_downstream.py` assumes coordinates are already in nanometers. The broader `post_inference.py` has separate unit-conversion logic; its `auto` mode uses a heuristic. Set units and pixel size explicitly when known.
+- Exported precision or background fields can contain fallback values. In the standalone example, `sigma_nm=120` and `uncertainty_xy_nm=20` are defaults, not fitted values.
+- The standalone exporter writes a ThunderSTORM-style CSV for Picasso conversion; the main post-inference path has a different Picasso export. Neither file generation nor this example verifies import into the application.
+- LiteLoc must be installed separately. Its revision, dependencies, microscope settings, and model/calibration artifacts affect reproducibility.
+- Additional localization backends are planned; only the LiteLoc adapter is currently included.
 
----
+## Next steps
 
-## Configuration: two files, two roles
-
-| File | What goes in it |
-|---|---|
-| `adapters/backend_paths.yml` | **Where** software is installed on your machine |
-| `profiles/*.yaml` | **What** scientific workflow to run (PSF type, pixel size, etc.) |
-
-These are intentionally separate so that the same profile works on any machine that has the backend installed.
-
----
-
-## Profiles
-
-Profiles define the scientific configuration for a run:
-
-- PSF type and dimensionality
-- Calibration mode
-- Pixel size and z-step
-- LiteLoc YAML sections (calibration / training / inference)
-- Export and QC options
-
-Start from `profiles/liteloc_unified_example.yaml` — it uses `auto` placeholders for paths that LabFlow fills at runtime (bead file, model path, movie paths).
-
-You can extend it for your specific setup:
-
-```yaml
-extends: liteloc_unified_example.yaml
-profile_name: my_lab_condition_A
-
-microscope:
-  pixel_size_nm: 100
-
-calibration:
-  z_step_nm: 50
-```
-
----
-
-## Outputs
-
-Each run creates a structured folder:
-
-```
-outputs/my_run/
-├── results/
-│   └── batches/<movie_id>/
-│       ├── input_qc.json
-│       ├── input_preview.png
-│       ├── canonical_localizations.csv
-│       ├── smap_localizations.csv
-│       ├── picasso_localizations.csv
-│       ├── napari_points.csv
-│       └── locan_localizations.csv
-├── benchmarks/
-│   ├── runtime_benchmark.csv
-│   ├── quality_metrics_benchmark.csv
-│   └── comparison_ready_summary.csv
-├── reports/
-│   ├── run_report.md
-│   └── run_report.html
-└── registry/
-    └── resolved_runtime_config.json
-```
-
----
-
-## Combining and comparing runs
-
-```bash
-# Merge outputs from multiple runs
-python combine_run_outputs.py
-
-# Compare benchmarks across runs
-python combine_benchmark_comparisons.py results -o comparison_summary_all_runs.csv
-```
-
----
-
-
-## Roadmap
-
-- Additional backend adapters (DECODE, DeepSTORM, FD-DeepLoc)
-- CRLB/RMSE reporting improvements
-- PSF diagnostics
-- Grid artifact analysis
-- Profile templates for common SMLM setups
-- Notebook-based demos
-- Registry compatibility checks
-
----
-
-## Limitations
-
-- LiteLoc must be installed separately
-- Profiles and backend YAMLs must match your microscope and PSF setup
-- Some QC metrics are experimental
-- Scientific validation is the responsibility of the user
-
----
+- Document one experimental run with shareable input data, configuration, output, and interpretation.
+- Validate downstream imports and coordinate conventions on that run.
+- Improve CRLB/RMSE reporting, PSF diagnostics, and registry compatibility checks.
+- Add profile examples and further backend adapters as they are tested.
 
 ## License
 
-**MIT License** — see [`LICENSE`](LICENSE).
-
-External tools (LiteLoc, downstream SMLM tools) remain governed by their own licenses.
-
----
+MIT — see [LICENSE](LICENSE). External tools, including LiteLoc, retain their own licenses.
 
 ## Citation
 

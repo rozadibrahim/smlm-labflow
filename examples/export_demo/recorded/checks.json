@@ -1,0 +1,18 @@
+{
+  "scope": "Synthetic standalone export check; no LiteLoc inference or accuracy evaluation",
+  "python": "3.12.14",
+  "pandas": "2.2.3",
+  "exporter_sha256": "fe6ca5e013f6c677932a88ccdf812ba4a7ef76cae6704c0bef5d2b6c1087aed4",
+  "fixture_sha256": "67eab31b023bed397e966f594fbfc45697f7f8d7d2955264d83218e1560dc6f4",
+  "checks": {
+    "export_report_passed": true,
+    "row_counts_preserved": true,
+    "picasso_coordinates_preserved_nm": true,
+    "napari_coordinates_preserved_nm": true,
+    "napari_axis_order_zyx": true,
+    "frames_preserved": true,
+    "photon_and_background_mapping": true,
+    "documented_placeholder_defaults": true
+  },
+  "passed": true
+}

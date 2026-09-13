@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-demo/
 venv/
 env/
 *.egg-info/
@@ -109,3 +110,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 adapters/backend_paths.local.yml
+
+# Small synthetic fixture and recorded export tables kept for reproducibility
+!examples/export_demo/localizations.csv
+!examples/export_demo/recorded/*.csv

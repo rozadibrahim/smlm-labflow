@@ -1,0 +1,5 @@
+frame,x,y,z,photons,background,confidence,backend,source_file
+1,110.0,330.0,-50.0,1200.0,12.0,0.95,synthetic,synthetic_fixture
+1,440.0,220.0,0.0,1800.0,15.0,0.90,synthetic,synthetic_fixture
+2,115.0,335.0,50.0,1000.0,10.0,0.85,synthetic,synthetic_fixture
+3,880.0,660.0,100.0,2200.0,20.0,0.98,synthetic,synthetic_fixture
